@@ -84,12 +84,27 @@ export default function Tasks() {
             }
         };
 
+        const handleTaskStatusUpdated = (payload) => {
+            console.log('📡 Socket: Task status updated', payload);
+            setTasks(prev => 
+                prev.map(t => {
+                    if (t.id === payload.taskId) {
+                        return { ...t, status: payload.newStatus || payload.status };
+                    }
+                    return t;
+                })
+            );
+            showToast('🔄', `Task #${payload.taskId} status: ${payload.newStatus || payload.status}`);
+        };
+
         socket.on('new_task', handleNewTask);
         socket.on('task_deleted', handleDeletedTask);
+        socket.on('task_status_updated', handleTaskStatusUpdated);
 
         return () => {
             socket.off('new_task', handleNewTask);
             socket.off('task_deleted', handleDeletedTask);
+            socket.off('task_status_updated', handleTaskStatusUpdated);
         };
     }, [showToast]);
 
@@ -276,7 +291,22 @@ export default function Tasks() {
                                         </td>
                                         <td>
                                             <div style={{ display: 'flex', gap: '8px' }}>
-                                                <button className="btn-sm green" onClick={() => navigate(`/tasks/${t.id}`)}>
+                                                <button className="btn-sm green" onClick={async () => {
+                                                    if (role !== 'admin') {
+                                                        try {
+                                                            await apiFetch('/staff/tasks/start', {
+                                                                method: 'PATCH',
+                                                                body: JSON.stringify({ taskId: t.id })
+                                                            });
+                                                            showToast('✅', 'Task started!');
+                                                            await fetchTasks();
+                                                        } catch (err) {
+                                                            console.error('Failed to start task:', err);
+                                                            showToast('❌', 'Failed to start task: ' + err.message);
+                                                        }
+                                                    }
+                                                    navigate(`/tasks/${t.id}`);
+                                                }}>
                                                     {role === 'admin' ? '👁️ View' : '👁️ View & Start'}
                                                 </button>
                                                 {role === 'admin' && (
