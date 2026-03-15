@@ -1,56 +1,79 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Sidebar from '../components/Sidebar';
 import useToast from '../hooks/useToast';
 import Toast from '../components/Toast';
-import useLocalStorage from '../hooks/useLocalStorage';
 import { useAuth } from '../context/AuthContext';
 import { Navigate } from 'react-router-dom';
+import { apiFetch } from '../api';
 
 export default function CreateStaff() {
     const { role } = useAuth();
     const { toast, showToast } = useToast();
+    const [staffList, setStaffList] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [creating, setCreating] = useState(false);
     
     // Redirect if not admin
     if (role !== 'admin') {
         return <Navigate to="/" replace />;
     }
 
-    const initialStaff = [
-        { name: 'Suresh Raina', email: 'suresh@company.com', password: 'password123', role: 'ITR Filing', checkIn: '09:00 AM', checkOut: '-', status: 'Present' },
-        { name: 'Meera Jasmine', email: 'meera@company.com', password: 'password123', role: 'GST Filing', checkIn: '09:15 AM', checkOut: '-', status: 'Present' },
-        { name: 'Vijay Sethu', email: 'vijay@company.com', password: 'password123', role: 'ITR Filing', checkIn: '-', checkOut: '-', status: 'Absent' },
-        { name: 'Karthik Sivakumar', email: 'karthik@company.com', password: 'password123', role: 'GST Filing', checkIn: '09:05 AM', checkOut: '-', status: 'Present' },
-        { name: 'Anjali Menon', email: 'anjali@company.com', password: 'password123', role: 'ITR Filing', checkIn: '-', checkOut: '-', status: 'Leave' },
-    ];
-
-    const [staffList, setStaffList] = useLocalStorage('sp_staff_list_v2', initialStaff);
-    const [newStaff, setNewStaff] = useState({ name: '', email: '', password: '', role: 'ITR Filing' });
+    const [newStaff, setNewStaff] = useState({ name: '', email: '', category: 'ITR Filing' });
     
-    const handleAddStaff = (e) => {
+    // Fetch staff from backend
+    useEffect(() => {
+        const fetchStaff = async () => {
+            setLoading(true);
+            try {
+                const res = await apiFetch('/admin/staff');
+                if (res.success && res.data) {
+                    setStaffList(res.data);
+                }
+            } catch (err) {
+                console.error('Failed to fetch staff:', err);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchStaff();
+    }, []);
+    
+    const handleAddStaff = async (e) => {
         e.preventDefault();
-        if (!newStaff.name || !newStaff.email || !newStaff.password) {
-            showToast('⚠️', 'Please fill all fields (Name, Email, Password)');
+        if (!newStaff.name || !newStaff.email) {
+            showToast('⚠️', 'Please fill Name and Email');
             return;
         }
         
-        // Check if email already exists
-        const emailExists = staffList.some(s => s.email === newStaff.email);
-        if (emailExists) {
-            showToast('⚠️', 'Email already registered!');
-            return;
+        setCreating(true);
+        try {
+            const res = await apiFetch('/admin/create-staff', {
+                method: 'POST',
+                body: JSON.stringify({
+                    name: newStaff.name,
+                    email: newStaff.email,
+                    category: newStaff.category,
+                    status: 'active'
+                })
+            });
+            
+            if (res.success) {
+                showToast('✅', `Staff "${newStaff.name}" created successfully!`);
+                setNewStaff({ name: '', email: '', category: 'ITR Filing' });
+                // Refresh staff list
+                const refreshRes = await apiFetch('/admin/staff');
+                if (refreshRes.success && refreshRes.data) {
+                    setStaffList(refreshRes.data);
+                }
+            } else {
+                showToast('❌', res.message || 'Failed to create staff');
+            }
+        } catch (err) {
+            showToast('❌', err.message || 'Failed to create staff');
+        } finally {
+            setCreating(false);
         }
-
-        setStaffList([{ ...newStaff, checkIn: '-', checkOut: '-', status: 'Absent' }, ...staffList]);
-        setNewStaff({ name: '', email: '', password: '', role: 'ITR Filing' });
-        showToast('✅', `Staff "${newStaff.name}" created successfully!`);
     };
-
-    const handleDeleteStaff = (email) => {
-        if(window.confirm('Are you sure you want to remove this staff member?')) {
-            setStaffList(staffList.filter(s => s.email !== email));
-            showToast('🗑️', 'Staff removed successfully');
-        }
-    }
 
     return (
         <div className="app-layout">
@@ -90,22 +113,11 @@ export default function CreateStaff() {
                             </div>
 
                             <div className="form-group">
-                                <label className="form-label">Login Password</label>
-                                <input
-                                    className="form-input"
-                                    type="text"
-                                    placeholder="••••••••"
-                                    value={newStaff.password}
-                                    onChange={e => setNewStaff({ ...newStaff, password: e.target.value })}
-                                />
-                            </div>
-
-                            <div className="form-group">
-                                <label className="form-label">Assigned Role</label>
+                                <label className="form-label">Assigned Category</label>
                                 <select
                                     className="form-input"
-                                    value={newStaff.role}
-                                    onChange={e => setNewStaff({ ...newStaff, role: e.target.value })}
+                                    value={newStaff.category}
+                                    onChange={e => setNewStaff({ ...newStaff, category: e.target.value })}
                                 >
                                     <option>ITR Filing</option>
                                     <option>GST Filing</option>
@@ -115,57 +127,124 @@ export default function CreateStaff() {
                                 </select>
                             </div>
 
-                            <button className="btn-primary" type="submit" style={{ marginTop: '8px', justifyContent: 'center' }}>🚀 Create Staff Profile</button>
+                            <button 
+                                className="btn-primary" 
+                                type="submit" 
+                                style={{ marginTop: '8px', justifyContent: 'center' }}
+                                disabled={creating}
+                            >
+                                {creating ? '⏳ Creating...' : '🚀 Create Staff Profile'}
+                            </button>
                         </form>
                     </div>
 
                     {/* List Section */}
                     <div className="table-card" style={{ alignSelf: 'start' }}>
-                         <div className="table-header">
+                        <div className="table-header">
                             <span style={{ fontWeight: 700, fontSize: '15px' }}>👨‍💼 Registered Staff Members</span>
+                            <span style={{ 
+                                background: 'rgba(99,102,241,0.15)', 
+                                color: '#a5b4fc', 
+                                padding: '4px 12px', 
+                                borderRadius: '8px', 
+                                fontSize: '12px', 
+                                fontWeight: 700 
+                            }}>
+                                {staffList.length} Staff
+                            </span>
                         </div>
                         <table>
                             <thead>
                                 <tr>
+                                    <th>Staff ID</th>
                                     <th>Staff Details</th>
-                                    <th>Login Info</th>
-                                    <th>Role</th>
-                                    <th>Action</th>
+                                    <th>Email</th>
+                                    <th>Category</th>
+                                    <th>Tasks</th>
+                                    <th>Status</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {staffList.map((s, idx) => (
-                                    <tr key={idx}>
+                                {loading ? (
+                                    <tr>
+                                        <td colSpan="6" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px' }}>⏳ Loading...</td>
+                                    </tr>
+                                ) : staffList.length === 0 ? (
+                                    <tr>
+                                        <td colSpan="6" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px' }}>No staff members registered yet.</td>
+                                    </tr>
+                                ) : staffList.map((s, idx) => (
+                                    <tr key={s.id}>
                                         <td>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--accent-light)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px' }}>
-                                                    {s.name.split(' ').map(n => n[0]).join('')}
-                                                </div>
-                                                <div>
-                                                    <div style={{ fontWeight: 600 }}>{s.name}</div>
-                                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>ID: EMP-{1000 + idx + 1}</div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <div style={{ fontSize: '13px', color: '#e2e8f0' }}>{s.email || '-'}</div>
-                                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{s.password ? `Pass: ${s.password}` : 'No Password'}</div>
-                                        </td>
-                                        <td>
-                                            <span style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: `1px solid rgba(99,102,241,0.3)` }}>
-                                                {s.role}
+                                            <span style={{ 
+                                                background: 'rgba(99,102,241,0.15)', 
+                                                color: '#a5b4fc', 
+                                                padding: '4px 10px', 
+                                                borderRadius: '6px', 
+                                                fontSize: '12px', 
+                                                fontWeight: 700 
+                                            }}>
+                                                {s.staff_code || `S${String(idx + 1).padStart(3, '0')}`}
                                             </span>
                                         </td>
                                         <td>
-                                            <button className="btn-sm" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)' }} onClick={() => handleDeleteStaff(s.email)}>🗑️ Remove</button>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                <div style={{ 
+                                                    width: '36px', 
+                                                    height: '36px', 
+                                                    borderRadius: '50%', 
+                                                    background: 'var(--accent-light)', 
+                                                    color: 'var(--accent)', 
+                                                    display: 'flex', 
+                                                    alignItems: 'center', 
+                                                    justifyContent: 'center', 
+                                                    fontWeight: 700, 
+                                                    fontSize: '13px' 
+                                                }}>
+                                                    {s.name?.split(' ').map(n => n[0]).join('') || '?'}
+                                                </div>
+                                                <div style={{ fontWeight: 600 }}>{s.name}</div>
+                                            </div>
+                                        </td>
+                                        <td style={{ fontSize: '13px', color: '#94a3b8' }}>{s.email || '-'}</td>
+                                        <td>
+                                            <span style={{ 
+                                                background: 'rgba(245,158,11,0.12)', 
+                                                color: '#fbbf24', 
+                                                padding: '4px 10px', 
+                                                borderRadius: '6px', 
+                                                fontSize: '11px', 
+                                                fontWeight: 700 
+                                            }}>
+                                                {Array.isArray(s.category) ? s.category.join(', ') : s.category || 'N/A'}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span style={{ 
+                                                background: 'rgba(232,121,249,0.12)', 
+                                                color: '#e879f9', 
+                                                padding: '4px 10px', 
+                                                borderRadius: '6px', 
+                                                fontSize: '12px', 
+                                                fontWeight: 600 
+                                            }}>
+                                                {s.task_count || 0} tasks
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span style={{ 
+                                                background: s.status === 'active' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.12)', 
+                                                color: s.status === 'active' ? '#34d399' : '#f87171', 
+                                                padding: '4px 10px', 
+                                                borderRadius: '6px', 
+                                                fontSize: '11px', 
+                                                fontWeight: 700 
+                                            }}>
+                                                {s.status === 'active' ? '✓ Active' : '✕ Inactive'}
+                                            </span>
                                         </td>
                                     </tr>
                                 ))}
-                                {staffList.length === 0 && (
-                                    <tr>
-                                        <td colSpan="4" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px' }}>No staff members registered yet.</td>
-                                    </tr>
-                                )}
                             </tbody>
                         </table>
                     </div>

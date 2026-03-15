@@ -341,7 +341,7 @@ export default function Tasks() {
                             <select className="form-input" value={newTask.staffId} onChange={e => setNewTask({ ...newTask, staffId: e.target.value })}>
                                 <option value="">-- Select Staff --</option>
                                 {backendStaff.map((s) => (
-                                    <option key={s.id} value={s.id}>{s.name} ({s.category})</option>
+                                    <option key={s.id} value={s.id}>[{s.staff_code || 'S???'}] {s.name} ({s.category})</option>
                                 ))}
                             </select>
                         </div>

@@ -12,6 +12,7 @@ export default function Dashboard() {
     const { role, user } = useAuth();
     const { toast, showToast } = useToast();
     const [allTasks, setAllTasks] = useState([]);
+    const [clients, setClients] = useState([]);
     const [loading, setLoading] = useState(false);
     const [dashboardStats, setDashboardStats] = useState(null);
 
@@ -30,6 +31,51 @@ export default function Dashboard() {
                     const stats = await apiFetch('/admin/dashboard');
                     if (stats.success) {
                         setDashboardStats(stats.data);
+                    }
+                    
+                    // Fetch clients list
+                    const clientsRes = await apiFetch('/admin/clients');
+                    if (clientsRes.success) {
+                        // Enrich clients with task info
+                        const enrichedClients = (clientsRes.data || []).map(client => {
+                            const clientTasks = data.data?.filter(t => 
+                                t.client_id === client.id || t.client_name === client.name
+                            ) || [];
+                            const taskTypes = [...new Set(clientTasks.map(t => t.task_type))];
+                            return {
+                                ...client,
+                                taskCount: clientTasks.length,
+                                taskTypes
+                            };
+                        });
+                        setClients(enrichedClients);
+                    }
+                } else {
+                    // Staff: Extract unique clients from tasks with task details
+                    if (data.success && data.data) {
+                        const clientMap = new Map();
+                        data.data.forEach(task => {
+                            const clientKey = task.client_phone || task.client_id;
+                            if (clientKey) {
+                                if (!clientMap.has(clientKey)) {
+                                    clientMap.set(clientKey, {
+                                        id: task.client_id,
+                                        name: task.client_name || 'Unknown',
+                                        phone: task.client_phone || 'N/A',
+                                        email: task.client_email || 'N/A',
+                                        taskTypes: [task.task_type],
+                                        taskCount: 1
+                                    });
+                                } else {
+                                    const existing = clientMap.get(clientKey);
+                                    if (!existing.taskTypes.includes(task.task_type)) {
+                                        existing.taskTypes.push(task.task_type);
+                                    }
+                                    existing.taskCount++;
+                                }
+                            }
+                        });
+                        setClients(Array.from(clientMap.values()));
                     }
                 }
             } catch (err) {
@@ -162,38 +208,104 @@ export default function Dashboard() {
                     </div>
 
                     {role === 'admin' ? (
-                        /* ── ADMIN: Recent Tasks Table (real DB data) ── */
-                        <div className="table-card">
-                            <div className="table-header">
-                                <span style={{ fontWeight: 700, fontSize: '14px' }}>📂 Recent Task Activity</span>
-                                <button className="btn-sm" onClick={() => navigate('/tasks')}>View All →</button>
+                        /* ── ADMIN: Recent Tasks Table + Client List ── */
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+                            {/* Recent Tasks Table */}
+                            <div className="table-card">
+                                <div className="table-header">
+                                    <span style={{ fontWeight: 700, fontSize: '14px' }}>📋 Recent Task Activity</span>
+                                    <button className="btn-sm" onClick={() => navigate('/tasks')}>View All →</button>
+                                </div>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Client Name</th>
+                                            <th>Task Type</th>
+                                            <th>Assigned To</th>
+                                            <th>Documents</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {recentTasks.length === 0 ? (
+                                            <tr><td colSpan="5" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>No tasks yet</td></tr>
+                                        ) : (
+                                            recentTasks.map(t => (
+                                                <tr key={t.id} onClick={() => navigate(`/tasks/${t.id}`)} style={{ cursor: 'pointer' }}>
+                                                    <td><strong>{t.client}</strong></td>
+                                                    <td style={{ color: '#94a3b8' }}>{t.task}</td>
+                                                    <td style={{ color: '#94a3b8' }}>{t.users}</td>
+                                                    <td>📂 {t.docCount || 0} Files</td>
+                                                    <td><span className={`badge ${t.status === 'Completed' ? 'entity' : t.status === 'In-Progress' ? 'individual' : 'trust'}`}>{t.status}</span></td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
                             </div>
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Client Name</th>
-                                        <th>Task Type</th>
-                                        <th>Assigned To</th>
-                                        <th>Documents</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {recentTasks.length === 0 ? (
-                                        <tr><td colSpan="5" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>No tasks yet</td></tr>
-                                    ) : (
-                                        recentTasks.map(t => (
-                                            <tr key={t.id} onClick={() => navigate(`/tasks/${t.id}`)} style={{ cursor: 'pointer' }}>
-                                                <td><strong>{t.client}</strong></td>
-                                                <td style={{ color: '#94a3b8' }}>{t.task}</td>
-                                                <td style={{ color: '#94a3b8' }}>{t.users}</td>
-                                                <td>📂 {t.docCount || 0} Files</td>
-                                                <td><span className={`badge ${t.status === 'Completed' ? 'entity' : t.status === 'In-Progress' ? 'individual' : 'trust'}`}>{t.status}</span></td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
+
+                            {/* Client List Table */}
+                            <div className="table-card">
+                                <div className="table-header">
+                                    <span style={{ fontWeight: 700, fontSize: '14px' }}>👥 Client List</span>
+                                    <button className="btn-sm" onClick={() => navigate('/clients')}>View All →</button>
+                                </div>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Client ID</th>
+                                            <th>Client Name</th>
+                                            <th>Phone Number</th>
+                                            <th>Task Types</th>
+                                            <th>Total Tasks</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {clients.length === 0 ? (
+                                            <tr><td colSpan="5" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>No clients yet</td></tr>
+                                        ) : (
+                                            clients.slice(0, 5).map((c, index) => (
+                                                <tr key={c.id} onClick={() => navigate('/clients')} style={{ cursor: 'pointer' }}>
+                                                    <td>
+                                                        <span style={{ 
+                                                            background: 'rgba(99,102,241,0.15)', 
+                                                            color: '#a5b4fc', 
+                                                            padding: '4px 10px', 
+                                                            borderRadius: '6px', 
+                                                            fontSize: '12px', 
+                                                            fontWeight: 700 
+                                                        }}>
+                                                            {c.client_code || `C${String(index + 1).padStart(3, '0')}`}
+                                                        </span>
+                                                    </td>
+                                                    <td><strong style={{ color: '#e879f9' }}>{c.name}</strong></td>
+                                                    <td style={{ color: '#94a3b8' }}>📱 {c.phone || 'N/A'}</td>
+                                                    <td>
+                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                                            {(c.taskTypes || []).slice(0, 2).map((type, idx) => (
+                                                                <span key={idx} style={{ 
+                                                                    background: 'rgba(245,158,11,0.12)', 
+                                                                    color: '#fbbf24', 
+                                                                    padding: '2px 6px', 
+                                                                    borderRadius: '4px', 
+                                                                    fontSize: '11px', 
+                                                                    fontWeight: 600 
+                                                                }}>
+                                                                    {type}
+                                                                </span>
+                                                            ))}
+                                                            {(c.taskTypes || []).length > 2 && (
+                                                                <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>+{c.taskTypes.length - 2}</span>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    <td><span style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: 600 }}>{c.taskCount || 0} tasks</span></td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     ) : (
                         /* ── STAFF: Task Groups by Status ── */

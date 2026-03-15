@@ -246,10 +246,11 @@ export default function TaskDetail() {
             const userRaw = localStorage.getItem('sp_auth_user');
             const token = userRaw ? JSON.parse(userRaw).token : '';
 
-            // taskId in URL query parameter (more reliable with multer)
-            const uploadUrl = `http://localhost:3000/api/documents/upload?taskId=${finalTaskId}&docType=result`;
-            console.log('📤 UPLOAD URL:', uploadUrl);
-            console.log('🔹 taskId in URL:', finalTaskId);
+            // For admin, use admin endpoint; for staff, use staff endpoint
+            const baseUrl = role === 'admin' ? 'http://localhost:3000/api/admin/documents/upload' : 'http://localhost:3000/api/documents/upload';
+            const uploadUrl = `${baseUrl}?taskId=${finalTaskId}&docType=result`;
+            console.log('� UPLOAD URL:', uploadUrl);
+            console.log('�🔹 taskId in URL:', finalTaskId);
             console.log('🔹 File in FormData:', file.name, '(' + file.size + ' bytes)');
 
             // Upload using fetch - taskId in query param, file in FormData
@@ -270,14 +271,8 @@ export default function TaskDetail() {
             const uploadData = await uploadResponse.json();
             console.log('File uploaded successfully:', uploadData);
 
-            // Then mark task as completed
-            const completeResponse = await apiFetch('/tasks/complete', {
-                method: 'PATCH',
-                body: JSON.stringify({ taskId: id })
-            });
-
-            console.log('Task marked as completed:', completeResponse);
-            showToast('✅', 'Document uploaded & task completed!');
+            // Task status will NOT change - just show success message
+            showToast('✅', 'Result document uploaded successfully!');
             
             // Refresh task data
             const endpoint = role === 'admin' ? `/admin/tasks/${id}` : `/staff/tasks/${id}`;
@@ -351,6 +346,10 @@ export default function TaskDetail() {
                                 👤 Client Information
                             </h2>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
+                                    <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Client ID</span>
+                                    <span style={{ fontSize: '14px', fontWeight: 700, background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', padding: '2px 10px', borderRadius: '6px' }}>{task.client_code || 'C???'}</span>
+                                </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Name</span>
                                     <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{task.client_name || 'N/A'}</span>
@@ -433,10 +432,10 @@ export default function TaskDetail() {
                                 </h2>
                                 
                                 {/* Always show upload form (allows re-upload) */}
-                                <div style={{ textAlign: 'center', padding: '20px', border: '2px dashed var(--border)', borderRadius: '12px', color: 'var(--text-muted)', marginBottom: statusName === 'Completed' && task.completed_at ? '20px' : '0' }}>
+                                <div style={{ textAlign: 'center', padding: '20px', border: '2px dashed var(--border)', borderRadius: '12px', color: 'var(--text-muted)', marginBottom: resultDocuments.length > 0 ? '20px' : '0' }}>
                                     <div style={{ fontSize: '28px', marginBottom: '12px' }}>📁</div>
                                     <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>Upload Result File</div>
-                                    <div style={{ fontSize: '12px', marginBottom: '16px' }}>Upload any document to complete this task</div>
+                                    <div style={{ fontSize: '12px', marginBottom: '16px' }}>Upload result document for this task</div>
                                     <label style={{ display: 'inline-block' }}>
                                         <input
                                             type="file"
@@ -459,49 +458,86 @@ export default function TaskDetail() {
                                     </label>
                                 </div>
 
-                                {/* Show result only if completed */}
+                                {/* Show only final uploaded result file */}
+                                {resultDocuments.length > 0 && (() => {
+                                    const finalDoc = resultDocuments[resultDocuments.length - 1];
+                                    return (
+                                        <div style={{ textAlign: 'center', padding: '20px', background: 'rgba(232,121,249,0.1)', borderRadius: '12px', border: '1px solid rgba(232,121,249,0.3)' }}>
+                                            <div style={{ fontSize: '28px', marginBottom: '12px' }}>📋</div>
+                                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#e879f9', marginBottom: '12px' }}>Result File</div>
+                                            <button className="btn-sm green" style={{ width: '100%' }} onClick={() => handleDownload(finalDoc.file_url, finalDoc.file_name)}>
+                                                ⬇️ {finalDoc.file_name}
+                                            </button>
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* Show completed status if task is completed */}
                                 {statusName === 'Completed' && task.completed_at && (
-                                    <div style={{ textAlign: 'center', padding: '20px', background: 'rgba(16,185,129,0.1)', borderRadius: '12px', border: '1px solid rgba(16,185,129,0.3)' }}>
-                                        <div style={{ fontSize: '32px', marginBottom: '12px' }}>✅</div>
-                                        <div style={{ fontSize: '14px', fontWeight: 700, color: '#10b981', marginBottom: '8px' }}>Task Completed</div>
+                                    <div style={{ textAlign: 'center', padding: '16px', background: 'rgba(16,185,129,0.1)', borderRadius: '12px', border: '1px solid rgba(16,185,129,0.3)', marginTop: '16px' }}>
+                                        <div style={{ fontSize: '24px', marginBottom: '8px' }}>✅</div>
+                                        <div style={{ fontSize: '14px', fontWeight: 700, color: '#10b981', marginBottom: '4px' }}>Task Completed</div>
                                         <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Completed on {formatDate(task.completed_at)}</div>
-                                        {resultDocuments.length > 0 && (
-                                            <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid rgba(16,185,129,0.3)' }}>
-                                                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>Uploaded Files:</div>
-                                                {resultDocuments.map((d, i) => (
-                                                    <button key={i} className="btn-sm green" style={{ width: '100%', marginTop: '8px' }} onClick={() => handleDownload(d.file_url, d.file_name)}>
-                                                        ⬇️ {d.file_name}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        )}
                                     </div>
                                 )}
                             </div>
                         )}
 
-                        {/* ── Admin View: Result Display Section ── */}
-                        {role === 'admin' && statusName === 'Completed' && task.completed_at && (
-                            <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #10b981' }}>
+                        {/* ── Admin View: Upload Result Section ── */}
+                        {role === 'admin' && (
+                            <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #e879f9' }}>
                                 <h2 style={{ fontSize: '16px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    ✅ Task Result
+                                    📤 Task Result
                                 </h2>
-                                <div style={{ textAlign: 'center', padding: '20px', background: 'rgba(16,185,129,0.1)', borderRadius: '12px', border: '1px solid rgba(16,185,129,0.3)' }}>
-                                    <div style={{ fontSize: '28px', marginBottom: '12px' }}>📋</div>
-                                    <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '12px' }}>Completed on {formatDate(task.completed_at)}</div>
-                                    {resultDocuments.length > 0 ? (
-                                        <div>
-                                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', fontWeight: 600 }}>📁 Submitted Documents ({resultDocuments.length}):</div>
-                                            {resultDocuments.map((d, i) => (
-                                                <button key={i} className="btn-sm blue" style={{ width: '100%', marginTop: '8px' }} onClick={() => handleDownload(d.file_url, d.file_name)}>
-                                                    ⬇️ {d.file_name}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No documents uploaded</div>
-                                    )}
+                                
+                                <div style={{ textAlign: 'center', padding: '20px', border: '2px dashed var(--border)', borderRadius: '12px', color: 'var(--text-muted)', marginBottom: resultDocuments.length > 0 ? '20px' : '0' }}>
+                                    <div style={{ fontSize: '28px', marginBottom: '12px' }}>📁</div>
+                                    <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>Upload Result File</div>
+                                    <div style={{ fontSize: '12px', marginBottom: '16px' }}>Upload result document for this task</div>
+                                    <label style={{ display: 'inline-block' }}>
+                                        <input
+                                            type="file"
+                                            accept={acceptFormats}
+                                            onChange={handleUploadResult}
+                                            disabled={uploading}
+                                            style={{ display: 'none' }}
+                                        />
+                                        <button 
+                                            className="btn-sm green" 
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.currentTarget.previousElementSibling.click();
+                                            }}
+                                            disabled={uploading}
+                                            style={{ cursor: uploading ? 'not-allowed' : 'pointer', opacity: uploading ? 0.6 : 1 }}
+                                        >
+                                            {uploading ? '⏳ Uploading...' : '📄 Choose File'}
+                                        </button>
+                                    </label>
                                 </div>
+
+                                {/* Show only final uploaded result file */}
+                                {resultDocuments.length > 0 && (() => {
+                                    const finalDoc = resultDocuments[resultDocuments.length - 1];
+                                    return (
+                                        <div style={{ textAlign: 'center', padding: '20px', background: 'rgba(232,121,249,0.1)', borderRadius: '12px', border: '1px solid rgba(232,121,249,0.3)' }}>
+                                            <div style={{ fontSize: '28px', marginBottom: '12px' }}>📋</div>
+                                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#e879f9', marginBottom: '12px' }}>Result File</div>
+                                            <button className="btn-sm blue" style={{ width: '100%' }} onClick={() => handleDownload(finalDoc.file_url, finalDoc.file_name)}>
+                                                ⬇️ {finalDoc.file_name}
+                                            </button>
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* Show completed status if task is completed */}
+                                {statusName === 'Completed' && task.completed_at && (
+                                    <div style={{ textAlign: 'center', padding: '16px', background: 'rgba(16,185,129,0.1)', borderRadius: '12px', border: '1px solid rgba(16,185,129,0.3)', marginTop: '16px' }}>
+                                        <div style={{ fontSize: '24px', marginBottom: '8px' }}>✅</div>
+                                        <div style={{ fontSize: '14px', fontWeight: 700, color: '#10b981', marginBottom: '4px' }}>Task Completed</div>
+                                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Completed on {formatDate(task.completed_at)}</div>
+                                    </div>
+                                )}
                             </div>
                         )}
 
