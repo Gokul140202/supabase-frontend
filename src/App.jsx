@@ -5,6 +5,8 @@ import Tasks from './pages/Tasks';
 import Attendance from './pages/Attendance';
 import Reports from './pages/Reports';
 import TaskDetail from './pages/TaskDetail';
+import Rework from './pages/Rework';
+import ReworkDetail from './pages/ReworkDetail';
 import Login from './pages/Login';
 
 import Sidebar from './components/Sidebar';
@@ -42,6 +44,8 @@ export default function App() {
             <Route path="/clients" element={<Clients />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/tasks/:id" element={<TaskDetail />} />
+            <Route path="/rework" element={<Rework />} />
+            <Route path="/rework/:id" element={<ReworkDetail />} />
             <Route path="/attendance" element={<Attendance />} />
 
             <Route path="/reports" element={<Reports />} />

@@ -38,6 +38,9 @@ export default function Sidebar() {
                         <NavLink to="/tasks" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
                             <span className="nav-icon">➕</span> Assign Tasks
                         </NavLink>
+                        <NavLink to="/rework" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+                            <span className="nav-icon">🔄</span> Rework
+                        </NavLink>
                         <NavLink to="/clients" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
                             <span className="nav-icon">👥</span> Manage Clients
                         </NavLink>
@@ -56,6 +59,9 @@ export default function Sidebar() {
                         </NavLink>
                         <NavLink to="/tasks" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
                             <span className="nav-icon">📝</span> My Tasks
+                        </NavLink>
+                        <NavLink to="/rework" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+                            <span className="nav-icon">🔄</span> Rework
                         </NavLink>
                         <NavLink to="/clients" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
                             <span className="nav-icon">👥</span> Clients List

@@ -55,7 +55,7 @@ export default function Upload() {
         if (!file) { showToast('❌', 'Please select a document to upload.', true); return; }
 
         setSubmitting(true);
-        setTimeout(() => {
+        setTimeout(async () => {
             const trimmedName = name.trim();
             const trimmedEmail = email.trim();
             const icon = getFileIcon(file.name);
@@ -100,6 +100,25 @@ export default function Upload() {
                 email: trimmedEmail,
                 time: 'Just now',
             }, ...prev.slice(0, 19)]);
+
+            // ── Webhook: Send result to external app ──
+            try {
+                await fetch('https://external-app.com/webhook/result-upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event: 'test_result_uploaded',
+                        client_name: trimmedName,
+                        client_mobile: mobile,
+                        file_name: file.name,
+                        file_size: formatSize(file.size),
+                        uploaded_at: new Date().toISOString()
+                    })
+                });
+            } catch (err) {
+                // Optionally show error or log
+                console.error('Webhook send failed', err);
+            }
 
             setSubmitting(false);
             setName(''); setMobile(''); setEmail(''); setFile(null);
