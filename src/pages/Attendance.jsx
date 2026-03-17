@@ -15,29 +15,23 @@ const formatDate = (dateStr) => {
     const raw = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
     const [y, m, d] = raw.split('-').map(Number);
     const date = new Date(y, m - 1, d);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
     if (date.getTime() === today.getTime()) return 'Today';
     if (date.getTime() === yesterday.getTime()) return 'Yesterday';
-
-    const dd = String(d).padStart(2, '0');
-    const mm = String(m).padStart(2, '0');
-    return `${dd}/${mm}/${y}`;
+    return `${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y}`;
 };
 
 const calcWorkHours = (checkIn, checkOut) => {
     if (!checkIn || !checkOut) return '—';
     const diff = (new Date(checkOut) - new Date(checkIn)) / 1000 / 60;
     const h = Math.floor(diff / 60);
-    const m = Math.round(diff % 60);
-    return `${h}h ${m}m`;
+    const mn = Math.round(diff % 60);
+    return `${h}h ${mn}m`;
 };
 
 // ═══════════════════════════════════════════════════════════
-// STAFF VIEW — Check In/Out + My History
+// STAFF VIEW
 // ═══════════════════════════════════════════════════════════
 function StaffAttendance({ showToast }) {
     const [today, setToday] = useState(null);
@@ -96,14 +90,13 @@ function StaffAttendance({ showToast }) {
 
     const checkedIn = today?.check_in;
     const checkedOut = today?.check_out;
-
-    const presentDays = history.filter(r => r.status === 'present').length;
+    const presentDays = history.filter(r => r.status === 'present' || r.status === 'completed').length;
 
     if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</div>;
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {/* Hero Section */}
+            {/* Hero */}
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 1.5fr) 1fr', gap: '24px' }}>
                 <div style={{
                     background: !checkedIn
@@ -115,12 +108,12 @@ function StaffAttendance({ showToast }) {
                     <div style={{ position: 'relative', zIndex: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                             <div style={{ fontSize: '14px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>
-                                Today's Status • {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                                Today • {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                             </div>
-                            <h2 style={{ fontSize: '32px', fontWeight: 800, marginBottom: '8px', color: '#fff' }}>
-                                {!checkedIn ? 'Ready for Work?' : checkedOut ? 'Shift Complete!' : 'On Duty'}
+                            <h2 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '8px', color: '#fff' }}>
+                                {!checkedIn ? 'Ready for Work?' : checkedOut ? 'Shift Complete!' : 'On Duty ✅'}
                             </h2>
-                            <div style={{ fontSize: '15px', color: 'var(--text-muted)' }}>
+                            <div style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
                                 {!checkedIn ? "Don't forget to mark your attendance."
                                     : checkedOut ? `Worked ${calcWorkHours(today.check_in, today.check_out)} today.`
                                     : `Checked in at ${formatTime(today.check_in)}. Have a great day!`}
@@ -129,57 +122,50 @@ function StaffAttendance({ showToast }) {
                         <div>
                             {!checkedIn ? (
                                 <button onClick={handleCheckIn} disabled={actionLoading}
-                                    style={{ background: 'var(--accent)', color: '#fff', border: 'none', padding: '16px 32px', borderRadius: '16px', fontSize: '16px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 8px 16px rgba(99,102,241,0.25)', transition: 'all 0.3s', opacity: actionLoading ? 0.6 : 1 }}
-                                    onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
-                                    onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                                    style={{ background: 'var(--accent)', color: '#fff', border: 'none', padding: '16px 28px', borderRadius: '16px', fontSize: '15px', fontWeight: 700, cursor: 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
                                     {actionLoading ? '...' : 'Tap to Check-In ✌️'}
                                 </button>
                             ) : !checkedOut ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                    <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', padding: '12px 24px', borderRadius: '12px', textAlign: 'center' }}>
-                                        <div style={{ fontSize: '12px', color: '#34d399', fontWeight: 700, marginBottom: '2px' }}>CHECKED IN</div>
+                                    <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', padding: '12px 20px', borderRadius: '12px', textAlign: 'center' }}>
+                                        <div style={{ fontSize: '11px', color: '#34d399', fontWeight: 700 }}>CHECKED IN</div>
                                         <div style={{ fontSize: '20px', color: '#fff', fontWeight: 800 }}>{formatTime(today.check_in)}</div>
                                     </div>
                                     <button onClick={handleCheckOut} disabled={actionLoading}
-                                        style={{ background: '#f59e0b', color: '#fff', border: 'none', padding: '16px 32px', borderRadius: '16px', fontSize: '16px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 8px 16px rgba(245,158,11,0.25)', transition: 'all 0.3s', opacity: actionLoading ? 0.6 : 1 }}
-                                        onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
-                                        onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                                        style={{ background: '#f59e0b', color: '#fff', border: 'none', padding: '14px 28px', borderRadius: '16px', fontSize: '15px', fontWeight: 700, cursor: 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
                                         {actionLoading ? '...' : 'Shift Off 🚪'}
                                     </button>
                                 </div>
                             ) : (
                                 <div style={{ display: 'flex', gap: '12px' }}>
-                                    <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', padding: '16px 24px', borderRadius: '16px', textAlign: 'center' }}>
-                                        <div style={{ fontSize: '12px', color: '#34d399', fontWeight: 700, marginBottom: '4px' }}>CHECKED IN</div>
-                                        <div style={{ fontSize: '20px', color: '#fff', fontWeight: 800 }}>{formatTime(today.check_in)}</div>
+                                    <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', padding: '16px 20px', borderRadius: '16px', textAlign: 'center' }}>
+                                        <div style={{ fontSize: '11px', color: '#34d399', fontWeight: 700 }}>IN</div>
+                                        <div style={{ fontSize: '18px', color: '#fff', fontWeight: 800 }}>{formatTime(today.check_in)}</div>
                                     </div>
-                                    <div style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', padding: '16px 24px', borderRadius: '16px', textAlign: 'center' }}>
-                                        <div style={{ fontSize: '12px', color: '#fbbf24', fontWeight: 700, marginBottom: '4px' }}>SHIFT OFF</div>
-                                        <div style={{ fontSize: '20px', color: '#fff', fontWeight: 800 }}>{formatTime(today.check_out)}</div>
+                                    <div style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', padding: '16px 20px', borderRadius: '16px', textAlign: 'center' }}>
+                                        <div style={{ fontSize: '11px', color: '#fbbf24', fontWeight: 700 }}>OUT</div>
+                                        <div style={{ fontSize: '18px', color: '#fff', fontWeight: 800 }}>{formatTime(today.check_out)}</div>
                                     </div>
                                 </div>
                             )}
                         </div>
-                    </div>
-                    <div style={{ position: 'absolute', right: '-10%', top: '-20%', fontSize: '200px', opacity: 0.03, zIndex: 1, pointerEvents: 'none' }}>
-                        {!checkedIn ? '👋' : '☕'}
                     </div>
                 </div>
 
                 {/* Quick Stats */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '20px', padding: '24px', flex: 1, display: 'flex', alignItems: 'center', gap: '20px' }}>
-                        <div style={{ background: 'rgba(245,158,11,0.1)', width: '56px', height: '56px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>⏱️</div>
+                        <div style={{ background: 'rgba(245,158,11,0.1)', width: '52px', height: '52px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>⏱️</div>
                         <div>
-                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Today's Work</div>
-                            <div style={{ fontSize: '18px', fontWeight: 700, color: '#fff' }}>{checkedIn && checkedOut ? calcWorkHours(today.check_in, today.check_out) : checkedIn ? 'In Progress...' : 'Not Started'}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Today's Work</div>
+                            <div style={{ fontSize: '17px', fontWeight: 700 }}>{checkedIn && checkedOut ? calcWorkHours(today.check_in, today.check_out) : checkedIn ? 'In Progress...' : 'Not Started'}</div>
                         </div>
                     </div>
                     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '20px', padding: '24px', flex: 1, display: 'flex', alignItems: 'center', gap: '20px' }}>
-                        <div style={{ background: 'rgba(16,185,129,0.1)', width: '56px', height: '56px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>📈</div>
+                        <div style={{ background: 'rgba(16,185,129,0.1)', width: '52px', height: '52px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>📈</div>
                         <div>
-                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Total Records</div>
-                            <div style={{ fontSize: '18px', fontWeight: 700, color: '#fff' }}>{presentDays} Days Present</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Total Present</div>
+                            <div style={{ fontSize: '17px', fontWeight: 700 }}>{presentDays} Days</div>
                         </div>
                     </div>
                 </div>
@@ -189,18 +175,18 @@ function StaffAttendance({ showToast }) {
             <div className="table-card">
                 <div className="table-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                     <span style={{ fontWeight: 700, fontSize: '15px' }}>📅 My Attendance History</span>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
                         <select value={filterMonth} onChange={e => setFilterMonth(e.target.value)}
-                            style={{ background: 'var(--bg-main)', border: '1px solid var(--border)', color: '#fff', padding: '6px 10px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: '#fff', padding: '6px 10px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
                             <option value="">All Months</option>
                             {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => (
                                 <option key={i+1} value={i+1}>{m}</option>
                             ))}
                         </select>
                         <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
-                            style={{ background: 'var(--bg-main)', border: '1px solid var(--border)', color: '#fff', padding: '6px 10px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: '#fff', padding: '6px 10px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
                             <option value="">All Years</option>
-                            {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                            {Array.from({ length: 3 }, (_, i) => new Date().getFullYear() - i).map(y => (
                                 <option key={y} value={y}>{y}</option>
                             ))}
                         </select>
@@ -218,16 +204,16 @@ function StaffAttendance({ showToast }) {
                     </thead>
                     <tbody>
                         {history.length === 0 ? (
-                            <tr><td colSpan="5" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>No attendance records yet. Check in to start tracking!</td></tr>
+                            <tr><td colSpan="5" style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No attendance records yet. Check in to start tracking!</td></tr>
                         ) : history.map(r => {
-                            const stColor = r.status === 'present' ? '#34d399' : r.status === 'leave' ? '#fbbf24' : '#f87171';
-                            const stBg = r.status === 'present' ? 'rgba(16,185,129,0.15)' : r.status === 'leave' ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)';
-                            const stBorder = r.status === 'present' ? 'rgba(16,185,129,0.3)' : r.status === 'leave' ? 'rgba(245,158,11,0.3)' : 'rgba(239,68,68,0.3)';
+                            const stColor = r.status === 'present' || r.status === 'completed' ? '#34d399' : r.status === 'leave' ? '#fbbf24' : '#f87171';
+                            const stBg    = r.status === 'present' || r.status === 'completed' ? 'rgba(16,185,129,0.15)' : r.status === 'leave' ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)';
+                            const stBorder= r.status === 'present' || r.status === 'completed' ? 'rgba(16,185,129,0.3)'  : r.status === 'leave' ? 'rgba(245,158,11,0.3)'  : 'rgba(239,68,68,0.3)';
                             return (
                                 <tr key={r.id}>
-                                    <td><div style={{ fontWeight: 600 }}>{formatDate(r.date)}</div></td>
-                                    <td style={{ fontWeight: r.check_in ? 600 : 400, color: r.check_in ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_in)}</td>
-                                    <td style={{ fontWeight: r.check_out ? 600 : 400, color: r.check_out ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_out)}</td>
+                                    <td><strong>{formatDate(r.date)}</strong></td>
+                                    <td style={{ color: r.check_in ? '#fff' : 'var(--text-muted)', fontWeight: r.check_in ? 600 : 400 }}>{formatTime(r.check_in)}</td>
+                                    <td style={{ color: r.check_out ? '#fff' : 'var(--text-muted)', fontWeight: r.check_out ? 600 : 400 }}>{formatTime(r.check_out)}</td>
                                     <td><span style={{ background: stBg, color: stColor, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: `1px solid ${stBorder}` }}>{r.status}</span></td>
                                     <td style={{ color: 'var(--text-secondary)' }}>{calcWorkHours(r.check_in, r.check_out)}</td>
                                 </tr>
@@ -241,7 +227,7 @@ function StaffAttendance({ showToast }) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// ADMIN VIEW — All staff overview + history
+// ADMIN VIEW
 // ═══════════════════════════════════════════════════════════
 function AdminAttendance({ showToast }) {
     const [staffSummary, setStaffSummary] = useState([]);
@@ -250,9 +236,8 @@ function AdminAttendance({ showToast }) {
     const [staffDetail, setStaffDetail] = useState(null);
     const [loading, setLoading] = useState(true);
     const [filterMonth, setFilterMonth] = useState(() => String(new Date().getMonth() + 1));
-    const [filterYear, setFilterYear] = useState(() => String(new Date().getFullYear()));
+    const [filterYear, setFilterYear]   = useState(() => String(new Date().getFullYear()));
 
-    // Fetch staff summary + records for selected month
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
@@ -281,23 +266,20 @@ function AdminAttendance({ showToast }) {
         }
     };
 
-    // Totals
-    const totalPresent = staffSummary.reduce((sum, s) => sum + Number(s.present_days || 0), 0);
-    const totalAbsent = staffSummary.reduce((sum, s) => sum + Number(s.absent_days || 0), 0);
-    const totalHours = staffSummary.reduce((sum, s) => sum + Number(s.total_hours || 0), 0);
+    const totalPresent = staffSummary.reduce((s, x) => s + Number(x.present_days || 0), 0);
+    const totalHours   = staffSummary.reduce((s, x) => s + Number(x.total_hours  || 0), 0);
 
-    // Staff detail drill-down
+    // Staff drill-down
     if (selectedStaff && staffDetail) {
-        const s = staffDetail.staff;
+        const s   = staffDetail.staff;
         const sum = staffDetail.summary;
-        const detailRecords = staffDetail.records?.data || [];
+        const det = staffDetail.records?.data || [];
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 <button onClick={() => { setSelectedStaff(null); setStaffDetail(null); }}
                     style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', padding: '8px 16px', borderRadius: '10px', cursor: 'pointer', width: 'fit-content', fontSize: '13px', fontWeight: 600 }}>
                     ← Back to All Staff
                 </button>
-
                 <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '20px', padding: '28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                         <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--accent-light)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '16px' }}>
@@ -305,48 +287,41 @@ function AdminAttendance({ showToast }) {
                         </div>
                         <div>
                             <div style={{ fontWeight: 700, fontSize: '16px' }}>{s?.name}</div>
-                            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{s?.email} · {s?.staff_code}</div>
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{s?.email}</div>
                         </div>
                     </div>
                     <div style={{ display: 'flex', gap: '24px' }}>
                         {[
                             { label: 'PRESENT', value: sum?.present_days || 0, color: '#34d399' },
-                            { label: 'ABSENT', value: sum?.absent_days || 0, color: '#f87171' },
-                            { label: 'HOURS', value: sum?.total_hours ? Number(sum.total_hours).toFixed(1) : '0', color: '#60a5fa' },
+                            { label: 'HOURS',   value: sum?.total_hours ? Number(sum.total_hours).toFixed(1) : '0', color: '#60a5fa' },
                         ].map((st, i) => (
                             <div key={i} style={{ textAlign: 'center' }}>
                                 <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>{st.label}</div>
-                                <div style={{ fontSize: '20px', fontWeight: 800, color: st.color }}>{st.value}</div>
+                                <div style={{ fontSize: '22px', fontWeight: 800, color: st.color }}>{st.value}</div>
                             </div>
                         ))}
                     </div>
                 </div>
-
                 <div className="table-card">
-                    <div className="table-header">
-                        <span style={{ fontWeight: 700, fontSize: '15px' }}>📋 {s?.name}'s Attendance Records</span>
-                    </div>
+                    <div className="table-header"><span style={{ fontWeight: 700 }}>📋 {s?.name}'s Records</span></div>
                     <table>
-                        <thead>
-                            <tr><th>Date</th><th>Check In</th><th>Check Out</th><th>Status</th><th>Working Hours</th></tr>
-                        </thead>
+                        <thead><tr><th>Date</th><th>Check In</th><th>Check Out</th><th>Status</th><th>Working Hours</th></tr></thead>
                         <tbody>
-                            {detailRecords.length === 0 ? (
-                                <tr><td colSpan="5" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>No records found</td></tr>
-                            ) : detailRecords.map(r => {
-                                const stColor = r.status === 'present' ? '#34d399' : r.status === 'leave' ? '#fbbf24' : '#f87171';
-                                const stBg = r.status === 'present' ? 'rgba(16,185,129,0.15)' : r.status === 'leave' ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)';
-                                const stBorder = r.status === 'present' ? 'rgba(16,185,129,0.3)' : r.status === 'leave' ? 'rgba(245,158,11,0.3)' : 'rgba(239,68,68,0.3)';
-                                return (
-                                    <tr key={r.id}>
-                                        <td style={{ fontWeight: 600 }}>{formatDate(r.date)}</td>
-                                        <td style={{ fontWeight: r.check_in ? 600 : 400, color: r.check_in ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_in)}</td>
-                                        <td style={{ fontWeight: r.check_out ? 600 : 400, color: r.check_out ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_out)}</td>
-                                        <td><span style={{ background: stBg, color: stColor, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: `1px solid ${stBorder}` }}>{r.status}</span></td>
-                                        <td style={{ color: 'var(--text-secondary)' }}>{calcWorkHours(r.check_in, r.check_out)}</td>
-                                    </tr>
-                                );
-                            })}
+                            {det.length === 0
+                                ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>No records</td></tr>
+                                : det.map(r => {
+                                    const c = r.status === 'present' || r.status === 'completed' ? '#34d399' : '#f87171';
+                                    const b = r.status === 'present' || r.status === 'completed' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)';
+                                    return (
+                                        <tr key={r.id}>
+                                            <td style={{ fontWeight: 600 }}>{formatDate(r.date)}</td>
+                                            <td style={{ color: r.check_in ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_in)}</td>
+                                            <td style={{ color: r.check_out ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_out)}</td>
+                                            <td><span style={{ background: b, color: c, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700 }}>{r.status}</span></td>
+                                            <td style={{ color: 'var(--text-secondary)' }}>{calcWorkHours(r.check_in, r.check_out)}</td>
+                                        </tr>
+                                    );
+                                })}
                         </tbody>
                     </table>
                 </div>
@@ -358,39 +333,32 @@ function AdminAttendance({ showToast }) {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {/* Month/Year Filter */}
+            {/* Filter */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                <div style={{ fontSize: '15px', fontWeight: 700, color: '#fff' }}>
-                    📊 {monthNames[Number(filterMonth) - 1]} {filterYear} — Staff Overview
-                </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{ fontSize: '15px', fontWeight: 700 }}>📊 {monthNames[Number(filterMonth)-1]} {filterYear} — Staff Overview</div>
+                <div style={{ display: 'flex', gap: '8px' }}>
                     <select value={filterMonth} onChange={e => setFilterMonth(e.target.value)}
                         style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: '#fff', padding: '6px 10px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
-                        {monthNames.map((m, i) => (
-                            <option key={i+1} value={i+1}>{m}</option>
-                        ))}
+                        {monthNames.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
                     </select>
                     <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
                         style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: '#fff', padding: '6px 10px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
-                        {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(y => (
-                            <option key={y} value={y}>{y}</option>
-                        ))}
+                        {Array.from({ length: 3 }, (_, i) => new Date().getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                 </div>
             </div>
 
-            {/* Overall Summary */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+            {/* Summary Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
                 {[
                     { label: 'Total Present', value: totalPresent, icon: '✅', color: '#34d399' },
-                    { label: 'Total Absent', value: totalAbsent, icon: '❌', color: '#f87171' },
-                    { label: 'Total Hours', value: totalHours.toFixed(1) + 'h', icon: '⏱️', color: '#60a5fa' },
+                    { label: 'Total Hours',   value: totalHours.toFixed(1) + 'h', icon: '⏱️', color: '#60a5fa' },
                 ].map((c, i) => (
                     <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '16px', padding: '18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
                         <div style={{ fontSize: '22px' }}>{c.icon}</div>
                         <div>
                             <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>{c.label}</div>
-                            <div style={{ fontSize: '20px', fontWeight: 800, color: c.color }}>{c.value}</div>
+                            <div style={{ fontSize: '22px', fontWeight: 800, color: c.color }}>{c.value}</div>
                         </div>
                     </div>
                 ))}
@@ -399,33 +367,34 @@ function AdminAttendance({ showToast }) {
             {/* Staff Cards */}
             {loading ? (
                 <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</div>
+            ) : staffSummary.length === 0 ? (
+                <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', background: 'var(--bg-card)', borderRadius: '16px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>📭</div>
+                    <div>No attendance records for this month.</div>
+                </div>
             ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
                     {staffSummary.map(s => (
-                        <div key={s.staff_id}
-                            onClick={() => openStaffDetail(s.staff_id)}
+                        <div key={s.staff_id} onClick={() => openStaffDetail(s.staff_id)}
                             style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '20px', padding: '24px', cursor: 'pointer', transition: 'all 0.2s' }}
                             onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-                            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
-                            {/* Staff Header */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '20px' }}>
-                                <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'var(--accent-light)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '15px' }}>
+                            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)';  e.currentTarget.style.transform = 'translateY(0)'; }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--accent-light)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '14px' }}>
                                     {s.staff_name?.split(' ').map(n => n[0]).join('')}
                                 </div>
                                 <div>
-                                    <div style={{ fontWeight: 700, fontSize: '15px' }}>{s.staff_name}</div>
-                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{s.staff_code} · {s.staff_email}</div>
+                                    <div style={{ fontWeight: 700, fontSize: '14px' }}>{s.staff_name}</div>
+                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{s.staff_code}</div>
                                 </div>
                             </div>
-                            {/* Stats Grid */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                                 {[
                                     { label: 'Present', value: s.present_days || 0, color: '#34d399', bg: 'rgba(16,185,129,0.1)' },
-                                    { label: 'Absent', value: s.absent_days || 0, color: '#f87171', bg: 'rgba(239,68,68,0.1)' },
-                                    { label: 'Hours', value: s.total_hours || 0, color: '#60a5fa', bg: 'rgba(96,165,250,0.1)' },
+                                    { label: 'Hours',   value: s.total_hours || 0,   color: '#60a5fa', bg: 'rgba(96,165,250,0.1)' },
                                 ].map((stat, i) => (
                                     <div key={i} style={{ background: stat.bg, borderRadius: '12px', padding: '10px 8px', textAlign: 'center' }}>
-                                        <div style={{ fontSize: '18px', fontWeight: 800, color: stat.color }}>{stat.value}</div>
+                                        <div style={{ fontSize: '20px', fontWeight: 800, color: stat.color }}>{stat.value}</div>
                                         <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', marginTop: '2px' }}>{stat.label}</div>
                                     </div>
                                 ))}
@@ -438,47 +407,44 @@ function AdminAttendance({ showToast }) {
             {/* All Records Table */}
             <div className="table-card">
                 <div className="table-header">
-                    <span style={{ fontWeight: 700, fontSize: '15px' }}>📅 All Attendance Records — {monthNames[Number(filterMonth) - 1]} {filterYear}</span>
+                    <span style={{ fontWeight: 700, fontSize: '15px' }}>📅 All Records — {monthNames[Number(filterMonth)-1]} {filterYear}</span>
+                    <button className="btn-sm" onClick={fetchData}>🔄 Refresh</button>
                 </div>
                 <table>
                     <thead>
-                        <tr><th>Staff Member</th><th>Code</th><th>Date</th><th>Check In</th><th>Check Out</th><th>Working Hours</th><th>Status</th></tr>
+                        <tr><th>Staff</th><th>Date</th><th>Check In</th><th>Check Out</th><th>Hours</th><th>Status</th></tr>
                     </thead>
                     <tbody>
                         {loading ? (
-                            <tr><td colSpan="7" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>Loading...</td></tr>
+                            <tr><td colSpan="6" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>Loading...</td></tr>
                         ) : records.length === 0 ? (
-                            <tr><td colSpan="7" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>No attendance records for this month.</td></tr>
-                        ) : records.map((s, idx) => {
-                            const st = s.current_status;
-                            const stColor = st === 'present' ? '#34d399' : st === 'completed' ? '#60a5fa' : '#f87171';
-                            const stBg = st === 'present' ? 'rgba(16,185,129,0.15)' : st === 'completed' ? 'rgba(96,165,250,0.15)' : 'rgba(239,68,68,0.15)';
-                            const stBorder = st === 'present' ? 'rgba(16,185,129,0.3)' : st === 'completed' ? 'rgba(96,165,250,0.3)' : 'rgba(239,68,68,0.3)';
-                            const stLabel = st === 'present' ? 'Present' : st === 'completed' ? 'Shift Done' : 'Absent';
+                            <tr><td colSpan="6" style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
+                                No attendance records for this month.<br/>
+                                <span style={{ fontSize: '12px' }}>Staff needs to check-in from their dashboard.</span>
+                            </td></tr>
+                        ) : records.map((r, idx) => {
+                            const st  = r.current_status;
+                            const c   = st === 'present' || st === 'completed' ? '#34d399' : '#f87171';
+                            const bg  = st === 'present' || st === 'completed' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)';
+                            const lbl = st === 'completed' ? 'Shift Done' : st === 'present' ? 'Present' : 'Absent';
                             return (
-                                <tr key={`${s.staff_id}-${s.date}-${idx}`} style={{ cursor: 'pointer', transition: 'all 0.2s' }}
-                                    onClick={() => openStaffDetail(s.staff_id)}>
+                                <tr key={`${r.staff_id}-${r.date}-${idx}`} style={{ cursor: 'pointer' }} onClick={() => openStaffDetail(r.staff_id)}>
                                     <td>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--accent-light)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12px' }}>
-                                                {s.staff_name?.split(' ').map(n => n[0]).join('')}
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                            <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: 'var(--accent-light)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '11px' }}>
+                                                {r.staff_name?.split(' ').map(n => n[0]).join('')}
                                             </div>
                                             <div>
-                                                <div style={{ fontWeight: 600 }}>{s.staff_name}</div>
-                                                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{s.staff_email}</div>
+                                                <div style={{ fontWeight: 600, fontSize: '13px' }}>{r.staff_name}</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{r.staff_code}</div>
                                             </div>
                                         </div>
                                     </td>
-                                    <td style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{s.staff_code}</td>
-                                    <td style={{ fontWeight: 600 }}>{formatDate(s.date)}</td>
-                                    <td style={{ fontWeight: s.check_in ? 600 : 400, color: s.check_in ? '#fff' : 'var(--text-muted)' }}>{formatTime(s.check_in)}</td>
-                                    <td style={{ fontWeight: s.check_out ? 600 : 400, color: s.check_out ? '#fff' : 'var(--text-muted)' }}>{formatTime(s.check_out)}</td>
-                                    <td style={{ color: 'var(--text-secondary)' }}>{calcWorkHours(s.check_in, s.check_out)}</td>
-                                    <td>
-                                        <span style={{ background: stBg, color: stColor, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: `1px solid ${stBorder}` }}>
-                                            {stLabel}
-                                        </span>
-                                    </td>
+                                    <td style={{ fontWeight: 600 }}>{formatDate(r.date)}</td>
+                                    <td style={{ color: r.check_in ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_in)}</td>
+                                    <td style={{ color: r.check_out ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_out)}</td>
+                                    <td style={{ color: 'var(--text-secondary)' }}>{calcWorkHours(r.check_in, r.check_out)}</td>
+                                    <td><span style={{ background: bg, color: c, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700 }}>{lbl}</span></td>
                                 </tr>
                             );
                         })}
@@ -504,7 +470,9 @@ export default function Attendance() {
                     <h1 className="topbar-title">{role === 'admin' ? '📅 Staff & Attendance' : '⏰ My Attendance'}</h1>
                 </div>
                 <div className="page-content">
-                    {role === 'admin' ? <AdminAttendance showToast={showToast} /> : <StaffAttendance showToast={showToast} />}
+                    {role === 'admin'
+                        ? <AdminAttendance showToast={showToast} />
+                        : <StaffAttendance showToast={showToast} />}
                 </div>
             </div>
             <Toast toast={toast} />

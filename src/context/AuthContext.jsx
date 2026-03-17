@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react';
+import { apiFetch } from '../api';
 
 const AuthContext = createContext();
 
@@ -16,48 +17,50 @@ export function AuthProvider({ children }) {
         }
     }, [user]);
 
-    const fetchBackendLogin = async (role, emailInput = '') => {
-        try {
-            const endpoint = role === 'admin' ? '/auth/admin/login' : '/auth/staff/login';
-            const body = role === 'admin' 
-                ? { email: 'admin@taxportal.com', password: 'admin123' } 
-                : { email: emailInput }; 
-
-            const response = await fetch(`http://localhost:3000/api${endpoint}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await response.json();
-            
-            if (data.success && data.token) {
-                setUser({
-                    role,
-                    name: data.user.name || (role === 'admin' ? 'Administrator' : 'Staff Member'),
-                    email: data.user.email,
-                    id: data.user.id || data.user.name || (role === 'admin' ? 'ADM-01' : 'STF-01'),
-                    token: data.token
-                });
-                return true;
-            }
-            console.error('Login backend rejected:', data.message);
-            return false;
-        } catch (err) {
-            console.error('Login backend failed:', err);
-            return false;
-        }
-    };
-
     const login = async (role, emailInput = '') => {
-        const success = await fetchBackendLogin(role, emailInput);
-        if (success) return true;
-        
-        // Fallback to local stub ONLY if user asks for admin, but don't fake staff email if it's incorrect.
-        if (!success) {
-            if (role === 'admin') {
-                setUser({ role: 'admin', name: 'Administrator', id: 'ADM-01' });
-                return true;
+        try {
+            // 'auto' mode — email பார்த்து admin or staff decide பண்ணும்
+            if (role === 'auto') {
+                const data = await apiFetch('/auth/login', {
+                    method: 'POST',
+                    body: JSON.stringify({ email: emailInput }),
+                });
+                if (data.success) {
+                    setUser({
+                        role:  data.user.role,
+                        name:  data.user.name,
+                        email: data.user.email,
+                        id:    data.user.id,
+                        token: data.token,
+                    });
+                    return true;
+                }
+                return false;
             }
+
+            // Legacy: direct role login (backward compat)
+            if (role === 'admin') {
+                const data = await apiFetch('/auth/login', {
+                    method: 'POST',
+                    body: JSON.stringify({ email: 'admin@taxportal.com' }),
+                });
+                if (data.success) {
+                    setUser({ role: 'admin', name: data.user.name, email: data.user.email, id: data.user.id, token: data.token });
+                    return true;
+                }
+            } else {
+                if (!emailInput) return false;
+                const data = await apiFetch('/auth/login', {
+                    method: 'POST',
+                    body: JSON.stringify({ email: emailInput }),
+                });
+                if (data.success) {
+                    setUser({ role: data.user.role, name: data.user.name, email: data.user.email, id: data.user.id, token: data.token });
+                    return true;
+                }
+            }
+        } catch (err) {
+            console.error('Login failed:', err.message);
         }
         return false;
     };
