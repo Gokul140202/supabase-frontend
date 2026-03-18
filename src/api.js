@@ -25,8 +25,7 @@ const getCurrentStaffId = () => {
     } catch { return null; }
 };
 
-// ── task_code & rework_code select-ல include பண்ணி இருக்கோம் ──────────────
-// இல்லன்னா task.task_code null ஆகும், UUID fallback ஆகும்
+
 const TASK_SELECT = `
     id, task_type, status, assigned_at, started_at, completed_at,
     notes, created_at, updated_at, priority, deadline, source, task_code,
@@ -177,7 +176,7 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true };
         }
 
-        // ── ADMIN: Complete task (admin source மட்டும்) ───────────────────────
+        
         if (path === '/admin/tasks/complete' && method === 'PATCH') {
             const { taskId } = body || {};
             if (!taskId) throw new Error('taskId required');
@@ -268,6 +267,54 @@ export const apiFetch = async (endpoint, options = {}) => {
                 .select().single();
             if (error) throw error;
             return { success: true, data };
+        }
+
+        // ── REWORK CRM DOCUMENTS — same client + task_type documents table-லிருந்து ──
+        // CRM docs are in `documents` table with doc_type = task_type (GST_FILING etc)
+        const reworkCrmDocsMatch = path.match(/^\/reworks\/([^/]+)\/crm-documents$/);
+        if (reworkCrmDocsMatch && method === 'GET') {
+            const reworkId = reworkCrmDocsMatch[1];
+            // Get rework details first
+            const { data: rework, error: rErr } = await supabase
+                .from('reworks')
+                .select('client_id, task_type')
+                .eq('id', reworkId)
+                .single();
+            if (rErr || !rework) return { success: true, data: [] };
+
+            // Get all tasks for this client with same task_type
+            const { data: tasks } = await supabase
+                .from('tasks')
+                .select('id')
+                .eq('client_id', rework.client_id)
+                .eq('task_type', rework.task_type);
+
+            if (!tasks || tasks.length === 0) return { success: true, data: [] };
+
+            const taskIds = tasks.map(t => t.id);
+
+            // Fetch CRM documents from those tasks (doc_type = task_type, not result/attachment)
+            const { data: docs, error: dErr } = await supabase
+                .from('documents')
+                .select('id, file_url, file_name, file_type, doc_type, created_at, task_id')
+                .in('task_id', taskIds)
+                .not('doc_type', 'in', '("result","attachment")');
+
+            if (dErr) return { success: true, data: [] };
+            return { success: true, data: docs || [] };
+        }
+
+        // ── REWORK DOCUMENT FILE NAME UPDATE ─────────────────────────────────
+        const reworkDocUpdateMatch = path.match(/^\/rework-documents\/([^/]+)\/filename$/);
+        if (reworkDocUpdateMatch && method === 'PATCH') {
+            const docId = reworkDocUpdateMatch[1];
+            const { file_name } = body || {};
+            if (!file_name || !file_name.trim()) throw new Error('file_name required');
+            const { error } = await supabase.from('rework_documents')
+                .update({ file_name: file_name.trim() })
+                .eq('id', docId);
+            if (error) throw new Error('Rework document update failed: ' + error.message);
+            return { success: true };
         }
 
         // ── REWORKS ───────────────────────────────────────────────────────────

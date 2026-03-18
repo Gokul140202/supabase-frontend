@@ -17,13 +17,44 @@ export default function ReworkDetail() {
     const [uploading, setUploading] = useState(false);
     const [uploadingDoc, setUploadingDoc] = useState(false);
     const [docInputKey, setDocInputKey] = useState(Date.now());
+    const [crmDocs, setCrmDocs] = useState([]);  // documents table-லிருந்து CRM docs
+
+    // ── Inline edit states ────────────────────────────────────────────────────
+    const [editingFileId, setEditingFileId] = useState(null);
+    const [fileNameVal, setFileNameVal] = useState('');
+    const [savingFileId, setSavingFileId] = useState(null);
+
+    const handleSaveFileName = async (docId) => {
+        if (!fileNameVal.trim() || savingFileId) return;
+        setSavingFileId(docId);
+        try {
+            await apiFetch(`/rework-documents/${docId}/filename`, {
+                method: 'PATCH',
+                body: JSON.stringify({ file_name: fileNameVal.trim() }),
+            });
+            setEditingFileId(null);
+            showToast('✅', 'File name updated!');
+            await fetchRework();
+        } catch (err) {
+            showToast('❌', 'Failed: ' + err.message);
+        } finally {
+            setSavingFileId(null);
+        }
+    };
 
     const fetchRework = async () => {
         setLoading(true);
         try {
             const endpoint = role === 'admin' ? `/admin/reworks/${id}` : `/staff/reworks/${id}`;
             const data = await apiFetch(endpoint);
-            if (data.success && data.data) setRework(data.data);
+            if (data.success && data.data) {
+                setRework(data.data);
+                // CRM docs — documents table-லிருந்து same client+task_type
+                try {
+                    const crmData = await apiFetch(`/reworks/${id}/crm-documents`);
+                    if (crmData.success) setCrmDocs(crmData.data || []);
+                } catch (e) { setCrmDocs([]); }
+            }
         } catch (err) { showToast('❌', 'Failed to load rework details'); }
         finally { setLoading(false); }
     };
@@ -61,7 +92,6 @@ export default function ReworkDetail() {
     const taskName        = rework.task_type || 'Unknown Task';
     const statusName      = formatStatus(rework.status);
     const allDocuments    = rework.documents || [];
-    const documents       = allDocuments.filter(d => d.doc_type !== 'result');
     const resultDocuments = allDocuments.filter(d => d.doc_type === 'result');
 
     const statusColor = statusName === 'Completed' ? '#10b981' : statusName === 'In-Progress' ? '#6366f1' : '#f59e0b';
@@ -224,33 +254,33 @@ export default function ReworkDetail() {
                             </div>
                         </div>
 
-                        {/* Documents */}
-                        <div className="form-card" style={{ background: 'var(--bg-secondary)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                                <h2 style={{ fontSize: '16px', margin: 0 }}>
-                                    📁 Attached Documents
-                                    {documents.length > 0 && <span style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', padding: '2px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, marginLeft: '8px' }}>{documents.length}</span>}
-                                </h2>
-                                {statusName !== 'Completed' && (
-                                    <label>
-                                        <input key={docInputKey} type="file" accept={acceptFormats} onChange={handleUploadDocument} disabled={uploadingDoc} style={{ display: 'none' }} />
-                                        <span className="btn-sm" style={{ cursor: uploadingDoc ? 'not-allowed' : 'pointer', opacity: uploadingDoc ? 0.6 : 1 }}
-                                            onClick={e => { e.currentTarget.previousElementSibling.click(); }}>
-                                            {uploadingDoc ? '⏳ Uploading...' : '📤 Upload Document'}
-                                        </span>
-                                    </label>
+                        {/* CRM Documents — mobile numberல send பண்ண docs மட்டும் */}
+                        <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #f59e0b' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                                <h2 style={{ fontSize: '16px', margin: 0 }}>📎 CRM Documents</h2>
+                                {crmDocs.length > 0 && (
+                                    <span style={{ background: 'rgba(245,158,11,0.15)', color: '#fbbf24', padding: '2px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 700 }}>
+                                        {crmDocs.length}
+                                    </span>
                                 )}
+                        
                             </div>
-                            {documents.length === 0
-                                ? <div style={{ textAlign: 'center', padding: '40px', border: '1px dashed var(--border)', borderRadius: '12px', color: 'var(--text-muted)' }}><div style={{ fontSize: '32px', marginBottom: '8px' }}>📂</div><div>No files attached.</div></div>
+                            {crmDocs.length === 0
+                                ? <div style={{ textAlign: 'center', padding: '32px', border: '1px dashed rgba(245,158,11,0.3)', borderRadius: '12px', color: 'var(--text-muted)' }}>
+                                    <div style={{ fontSize: '28px', marginBottom: '8px' }}>📂</div>
+                                    <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>CRM-லிருந்து documents வரவில்லை</div>
+                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>GHL workflow-ல documents attach பண்ணி அனுப்பினால் இங்கே காட்டும்</div>
+                                </div>
                                 : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px' }}>
-                                    {documents.map((d, i) => (
-                                        <div key={i} style={{ background: 'rgba(255,255,255,0.03)', padding: '20px', borderRadius: '16px', border: '1px solid var(--border)', textAlign: 'center', transition: 'all 0.3s' }}
-                                            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-active)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-                                            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
-                                            <div style={{ fontSize: '32px', marginBottom: '12px' }}>{docIcon(d.file_name)}</div>
-                                            <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.file_name}>{d.file_name}</div>
-                                            <button className="btn-sm green" style={{ width: '100%' }} onClick={() => window.open(d.file_url, '_blank')}>⬇️ Download</button>
+                                    {crmDocs.map((d, i) => (
+                                        <div key={d.id || i} style={{ background: 'rgba(245,158,11,0.04)', padding: '20px', borderRadius: '16px', border: '1px solid rgba(245,158,11,0.2)', textAlign: 'center', transition: 'all 0.3s' }}
+                                            onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(245,158,11,0.5)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                                            onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(245,158,11,0.2)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
+                                            <div style={{ fontSize: '32px', marginBottom: '10px' }}>{docIcon(d.file_name)}</div>
+                                            <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.file_name}>{d.file_name || 'document'}</div>
+                                            <div style={{ fontSize: '10px', color: '#fbbf24', marginBottom: '10px', fontWeight: 600 }}>🔗 CRM</div>
+                                            <button className="btn-sm" style={{ width: '100%', fontSize: '12px', background: 'rgba(245,158,11,0.15)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.3)' }}
+                                                onClick={() => window.open(d.file_url, '_blank')}>⬇️ Download</button>
                                         </div>
                                     ))}
                                 </div>
