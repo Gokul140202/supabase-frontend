@@ -15,6 +15,8 @@ export default function Dashboard() {
     const [clients, setClients] = useState([]);
     const [loading, setLoading] = useState(false);
     const [dashboardStats, setDashboardStats] = useState(null);
+    // ── NEW: Rework count ──────────────────────────────────────
+    const [reworkCount, setReworkCount] = useState(0);
 
     useEffect(() => {
         const fetchDashboardData = async () => {
@@ -24,6 +26,17 @@ export default function Dashboard() {
                 const data = await apiFetch(endpoint);
                 if (data.success && data.data && data.data.length > 0) {
                     setAllTasks(data.data.map(mapBackendTaskToFrontend));
+                }
+
+                // ── NEW: Fetch reworks for count ───────────────
+                try {
+                    const reworkEndpoint = role === 'admin' ? '/admin/reworks' : '/staff/reworks';
+                    const reworkData = await apiFetch(reworkEndpoint);
+                    if (reworkData.success && reworkData.data) {
+                        setReworkCount(reworkData.data.length);
+                    }
+                } catch (e) {
+                    // rework fetch fail ஆனாலும் dashboard continue ஆகும்
                 }
 
                 // Fetch admin dashboard stats for real counts
@@ -36,7 +49,6 @@ export default function Dashboard() {
                     // Fetch clients list
                     const clientsRes = await apiFetch('/admin/clients');
                     if (clientsRes.success) {
-                        // Enrich clients with task info
                         const enrichedClients = (clientsRes.data || []).map(client => {
                             const clientTasks = data.data?.filter(t => 
                                 t.client_id === client.id || t.client_name === client.name
@@ -183,7 +195,7 @@ export default function Dashboard() {
                 </div>
 
                 <div className="page-content">
-                    {/* STATS */}
+                    {/* STATS — 5 cards now (added Rework) */}
                     <div className="stats-grid">
                         <div className="stat-card" onClick={() => navigate('/tasks')} style={{ cursor: 'pointer' }}>
                             <div style={{ fontSize: '20px' }}>{role === 'admin' ? '👥' : '📝'}</div>
@@ -204,6 +216,12 @@ export default function Dashboard() {
                             <div style={{ fontSize: '20px' }}>✅</div>
                             <div className="stat-value" style={{ color: '#34d399' }}>{completedTasks.length}</div>
                             <div className="stat-label">Completed</div>
+                        </div>
+                        {/* ── NEW: Rework Card ── */}
+                        <div className="stat-card" style={{ cursor: 'pointer', borderLeft: '3px solid #e879f9' }} onClick={() => navigate('/rework')}>
+                            <div style={{ fontSize: '20px' }}>🔁</div>
+                            <div className="stat-value" style={{ color: '#e879f9' }}>{reworkCount}</div>
+                            <div className="stat-label">Reworks</div>
                         </div>
                     </div>
 

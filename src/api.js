@@ -1,16 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 
-// ─────────────────────────────────────────────────────────────────
-// Supabase Client
-// ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://wzvzzcuennotfutklulh.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind6dnp6Y3Vlbm5vdGZ1dGtsdWxoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMyMDY0MjEsImV4cCI6MjA4ODc4MjQyMX0.f3Uk8LSTil0_F9f9V6vg54u3pXL9I88f1a-AkLRuiCI';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ─────────────────────────────────────────────────────────────────
-// Auth helpers (kept for backward compat)
-// ─────────────────────────────────────────────────────────────────
 export const getAuthHeaders = () => {
     const userRaw = localStorage.getItem('sp_auth_user');
     if (!userRaw) return {};
@@ -21,24 +15,21 @@ export const getAuthHeaders = () => {
     return {};
 };
 
-// Get current logged-in staff UUID from localStorage
 const getCurrentStaffId = () => {
     const userRaw = localStorage.getItem('sp_auth_user');
     if (!userRaw) return null;
     try {
         const user = JSON.parse(userRaw);
-        // Staff users have UUID as id; admin id is 'ADM-01'
         if (user.id && user.id !== 'ADM-01' && user.role === 'staff') return user.id;
         return null;
     } catch { return null; }
 };
 
-// ─────────────────────────────────────────────────────────────────
-// Supabase select strings with joins
-// ─────────────────────────────────────────────────────────────────
+// ── task_code & rework_code select-ல include பண்ணி இருக்கோம் ──────────────
+// இல்லன்னா task.task_code null ஆகும், UUID fallback ஆகும்
 const TASK_SELECT = `
     id, task_type, status, assigned_at, started_at, completed_at,
-    notes, created_at, updated_at, priority, deadline,
+    notes, created_at, updated_at, priority, deadline, source, task_code,
     clients:client_id ( id, name, phone, email, client_code ),
     staff:assigned_staff ( id, name, email, staff_code ),
     documents ( id, file_url, file_name, file_type, doc_type, created_at )
@@ -46,63 +37,55 @@ const TASK_SELECT = `
 
 const REWORK_SELECT = `
     id, task_type, status, rework_reason, assigned_at, started_at,
-    completed_at, notes, created_at, updated_at, priority,
+    completed_at, notes, created_at, updated_at, priority, rework_code,
     clients:client_id ( id, name, phone, email, client_code ),
     staff:assigned_staff ( id, name, email, staff_code ),
     rework_documents ( id, file_url, file_name, file_type, doc_type, created_at )
 `;
 
-// ─────────────────────────────────────────────────────────────────
-// Map helpers — convert Supabase rows to frontend shape
-// ─────────────────────────────────────────────────────────────────
 const mapTaskRow = (t) => {
     const docs = t.documents || [];
     const resultDoc = docs.find(d => d.doc_type === 'result');
     return {
         ...t,
-        client_name:     t.clients?.name        || null,
-        client_phone:    t.clients?.phone       || null,
-        client_email:    t.clients?.email       || null,
-        client_code:     t.clients?.client_code || null,
-        staff_name:      t.staff?.name          || 'Unassigned',
+        task_code:       t.task_code              || null,  // JKT2026031807
+        client_name:     t.clients?.name          || null,
+        client_phone:    t.clients?.phone         || null,
+        client_email:    t.clients?.email         || null,
+        client_code:     t.clients?.client_code   || null,  // JKC2026031803
+        client_id_raw:   t.clients?.id            || null,
+        staff_name:      t.staff?.name            || 'Unassigned',
         has_result:      !!resultDoc,
-        result_file_url: resultDoc?.file_url    || null,
+        result_file_url: resultDoc?.file_url      || null,
         document_count:  docs.length,
+        source:          t.source                 || 'crm',
     };
 };
 
 const mapReworkRow = (r) => ({
     ...r,
-    client_name:  r.clients?.name        || null,
-    client_phone: r.clients?.phone       || null,
-    client_email: r.clients?.email       || null,
-    client_code:  r.clients?.client_code || null,
-    staff_name:   r.staff?.name          || 'Unassigned',
-    documents:    r.rework_documents     || [],
+    rework_code:   r.rework_code            || null,  // JKR2026031804
+    client_name:   r.clients?.name          || null,
+    client_phone:  r.clients?.phone         || null,
+    client_email:  r.clients?.email         || null,
+    client_code:   r.clients?.client_code   || null,  // JKC2026031803
+    client_id_raw: r.clients?.id            || null,
+    staff_name:    r.staff?.name            || 'Unassigned',
+    documents:     r.rework_documents       || [],
 });
 
-// Upsert a client by name, return their UUID
 const upsertClientByName = async (clientName, phone = null) => {
     const { data: existing } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('name', clientName)
-        .maybeSingle();
+        .from('clients').select('id').eq('name', clientName).maybeSingle();
     if (existing) return existing.id;
-
     const { data: created, error } = await supabase
         .from('clients')
         .insert({ name: clientName, phone: phone || Date.now().toString().slice(-10) })
-        .select('id')
-        .single();
+        .select('id').single();
     if (error) throw new Error('Client create failed: ' + error.message);
     return created.id;
 };
 
-// ─────────────────────────────────────────────────────────────────
-// apiFetch — routes URL patterns to Supabase operations
-// Response format: { success: true, data: ... } (same as old backend)
-// ─────────────────────────────────────────────────────────────────
 export const apiFetch = async (endpoint, options = {}) => {
     const method = (options.method || 'GET').toUpperCase();
     let body = null;
@@ -117,74 +100,28 @@ export const apiFetch = async (endpoint, options = {}) => {
     const params = Object.fromEntries(parsed.searchParams);
 
     try {
-
-        // ── AUTH — Unified login (email auto-detects admin vs staff) ─
+        // ── AUTH ──────────────────────────────────────────────────────────────
         if (path === '/auth/login') {
             const { email } = body || {};
             if (!email) throw new Error('Email required');
-
-            // 1. Check admins table first
             const { data: adminData } = await supabase
-                .from('admins')
-                .select('id, name, email, status')
-                .eq('email', email.toLowerCase())
-                .eq('status', 'active')
-                .maybeSingle();
-
+                .from('admins').select('id, name, email, status')
+                .eq('email', email.toLowerCase()).eq('status', 'active').maybeSingle();
             if (adminData) {
-                return {
-                    success: true,
-                    token: 'admin-' + adminData.id,
-                    user: { role: 'admin', name: adminData.name, email: adminData.email, id: adminData.id },
-                };
+                return { success: true, token: 'admin-' + adminData.id,
+                    user: { role: 'admin', name: adminData.name, email: adminData.email, id: adminData.id } };
             }
-
-            // 2. Check staff table
-            const { data: staffData, error: staffError } = await supabase
-                .from('staff')
-                .select('id, name, email, staff_code, category, status')
-                .eq('email', email.toLowerCase())
-                .eq('status', 'active')
-                .maybeSingle();
-
+            const { data: staffData } = await supabase
+                .from('staff').select('id, name, email, staff_code, category, status')
+                .eq('email', email.toLowerCase()).eq('status', 'active').maybeSingle();
             if (staffData) {
-                return {
-                    success: true,
-                    token: 'staff-' + staffData.id,
-                    user: { role: 'staff', name: staffData.name, email: staffData.email, id: staffData.id },
-                };
+                return { success: true, token: 'staff-' + staffData.id,
+                    user: { role: 'staff', name: staffData.name, email: staffData.email, id: staffData.id } };
             }
-
             throw new Error('Email not found or account inactive');
         }
 
-        // ── AUTH — Legacy endpoints (backward compat) ────────────
-        if (path === '/auth/admin/login') {
-            return {
-                success: true,
-                token: 'admin-token',
-                user: { role: 'admin', name: 'Administrator', email: 'admin@taxportal.com', id: 'ADM-01' },
-            };
-        }
-
-        if (path === '/auth/staff/login') {
-            const { email } = body || {};
-            if (!email) throw new Error('Email required');
-            const { data, error } = await supabase
-                .from('staff')
-                .select('id, name, email, staff_code, category, status')
-                .eq('email', email)
-                .eq('status', 'active')
-                .single();
-            if (error || !data) throw new Error('Staff not found or inactive');
-            return {
-                success: true,
-                token: 'staff-' + data.id,
-                user: { role: 'staff', name: data.name, email: data.email, id: data.id },
-            };
-        }
-
-        // ── DASHBOARD ────────────────────────────────────────────
+        // ── DASHBOARD ─────────────────────────────────────────────────────────
         if (path === '/admin/dashboard') {
             const [{ count: totalClients }, { count: totalTasks }] = await Promise.all([
                 supabase.from('clients').select('id', { count: 'exact', head: true }),
@@ -193,10 +130,9 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true, data: { totalClients: totalClients || 0, totalTasks: totalTasks || 0 } };
         }
 
-        // ── TASKS ────────────────────────────────────────────────
+        // ── TASKS ─────────────────────────────────────────────────────────────
         if (path === '/admin/tasks' && method === 'GET') {
-            const { data, error } = await supabase
-                .from('tasks').select(TASK_SELECT).order('created_at', { ascending: false });
+            const { data, error } = await supabase.from('tasks').select(TASK_SELECT).order('created_at', { ascending: false });
             if (error) throw error;
             return { success: true, data: (data || []).map(mapTaskRow) };
         }
@@ -204,10 +140,8 @@ export const apiFetch = async (endpoint, options = {}) => {
         if (path === '/staff/tasks' && method === 'GET') {
             const staffId = getCurrentStaffId();
             if (!staffId) throw new Error('Not authenticated as staff');
-            const { data, error } = await supabase
-                .from('tasks').select(TASK_SELECT)
-                .eq('assigned_staff', staffId)
-                .order('created_at', { ascending: false });
+            const { data, error } = await supabase.from('tasks').select(TASK_SELECT)
+                .eq('assigned_staff', staffId).order('created_at', { ascending: false });
             if (error) throw error;
             return { success: true, data: (data || []).map(mapTaskRow) };
         }
@@ -221,7 +155,6 @@ export const apiFetch = async (endpoint, options = {}) => {
                 return { success: true, data: mapTaskRow(data) };
             }
             if (method === 'DELETE') {
-                // documents & task_history cascade automatically via FK ON DELETE CASCADE
                 const { error } = await supabase.from('tasks').delete().eq('id', id);
                 if (error) throw new Error('Delete failed: ' + error.message);
                 return { success: true };
@@ -239,8 +172,23 @@ export const apiFetch = async (endpoint, options = {}) => {
         if (path === '/staff/tasks/start' && method === 'PATCH') {
             const { taskId } = body || {};
             const { error } = await supabase.from('tasks')
-                .update({ status: 'in_progress', started_at: new Date().toISOString() })
-                .eq('id', taskId);
+                .update({ status: 'in_progress', started_at: new Date().toISOString() }).eq('id', taskId);
+            if (error) throw error;
+            return { success: true };
+        }
+
+        // ── ADMIN: Complete task (admin source மட்டும்) ───────────────────────
+        if (path === '/admin/tasks/complete' && method === 'PATCH') {
+            const { taskId } = body || {};
+            if (!taskId) throw new Error('taskId required');
+            const { data: taskData, error: fetchError } = await supabase
+                .from('tasks').select('id, source, status').eq('id', taskId).single();
+            if (fetchError) throw new Error('Task not found');
+            if (taskData.source === 'crm') {
+                return { success: false, error: 'CRM tasks cannot be manually completed by admin.', code: 'CRM_TASK_LOCKED' };
+            }
+            const { error } = await supabase.from('tasks')
+                .update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', taskId);
             if (error) throw error;
             return { success: true };
         }
@@ -250,14 +198,41 @@ export const apiFetch = async (endpoint, options = {}) => {
             if (!clientName || !taskType || !staffId) throw new Error('clientName, taskType, staffId required');
             const clientId = await upsertClientByName(clientName);
             const { data: task, error } = await supabase.from('tasks')
-                .insert({ client_id: clientId, task_type: taskType, assigned_staff: staffId, assigned_at: new Date().toISOString(), status: 'assigned' })
+                .insert({ client_id: clientId, task_type: taskType, assigned_staff: staffId,
+                    assigned_at: new Date().toISOString(), status: 'assigned', source: 'admin' })
                 .select('id').single();
             if (error) throw error;
             await supabase.rpc('increment_task_count', { staff_id: staffId }).maybeSingle();
             return { success: true, data: task };
         }
 
-        // ── CLIENTS ──────────────────────────────────────────────
+        // ── CLIENT NAME UPDATE ────────────────────────────────────────────────
+        const clientUpdateMatch = path.match(/^\/clients\/([^/]+)\/name$/);
+        if (clientUpdateMatch && method === 'PATCH') {
+            const clientId = clientUpdateMatch[1];
+            const { name } = body || {};
+            if (!name || !name.trim()) throw new Error('name required');
+            const { error } = await supabase.from('clients')
+                .update({ name: name.trim(), updated_at: new Date().toISOString() })
+                .eq('id', clientId);
+            if (error) throw new Error('Client update failed: ' + error.message);
+            return { success: true };
+        }
+
+        // ── DOCUMENT FILE NAME UPDATE ─────────────────────────────────────────
+        const docUpdateMatch = path.match(/^\/documents\/([^/]+)\/filename$/);
+        if (docUpdateMatch && method === 'PATCH') {
+            const docId = docUpdateMatch[1];
+            const { file_name } = body || {};
+            if (!file_name || !file_name.trim()) throw new Error('file_name required');
+            const { error } = await supabase.from('documents')
+                .update({ file_name: file_name.trim() })
+                .eq('id', docId);
+            if (error) throw new Error('Document update failed: ' + error.message);
+            return { success: true };
+        }
+
+        // ── CLIENTS ───────────────────────────────────────────────────────────
         if (path === '/admin/clients' && method === 'GET') {
             const { data, error } = await supabase.from('clients').select('*').order('created_at', { ascending: false });
             if (error) throw error;
@@ -267,9 +242,6 @@ export const apiFetch = async (endpoint, options = {}) => {
         const adminClientMatch = path.match(/^\/admin\/clients\/([^/]+)$/);
         if (adminClientMatch && method === 'DELETE') {
             const id = adminClientMatch[1];
-            // tasks → documents & task_history cascade via FK ON DELETE CASCADE
-            // client → tasks cascade via FK ON DELETE CASCADE
-            // reworks delete manually (no cascade from clients)
             await supabase.from('rework_documents').delete().in(
                 'rework_id',
                 (await supabase.from('reworks').select('id').eq('client_id', id)).data?.map(r => r.id) || []
@@ -280,7 +252,7 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true };
         }
 
-        // ── STAFF ────────────────────────────────────────────────
+        // ── STAFF ─────────────────────────────────────────────────────────────
         if (path === '/admin/staff' && method === 'GET') {
             const { data, error } = await supabase.from('staff').select('*').order('created_at', { ascending: false });
             if (error) throw error;
@@ -298,7 +270,7 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true, data };
         }
 
-        // ── REWORKS ──────────────────────────────────────────────
+        // ── REWORKS ───────────────────────────────────────────────────────────
         if (path === '/admin/reworks' && method === 'GET') {
             const { data, error } = await supabase.from('reworks').select(REWORK_SELECT).order('created_at', { ascending: false });
             if (error) throw error;
@@ -344,7 +316,8 @@ export const apiFetch = async (endpoint, options = {}) => {
             if (!clientName || !taskType || !staffId) throw new Error('clientName, taskType, staffId required');
             const clientId = await upsertClientByName(clientName);
             const { data: rework, error } = await supabase.from('reworks')
-                .insert({ client_id: clientId, task_type: taskType, assigned_staff: staffId, rework_reason: reworkReason || null, assigned_at: new Date().toISOString(), status: 'assigned' })
+                .insert({ client_id: clientId, task_type: taskType, assigned_staff: staffId,
+                    rework_reason: reworkReason || null, assigned_at: new Date().toISOString(), status: 'assigned' })
                 .select('id').single();
             if (error) throw error;
             return { success: true, data: rework };
@@ -353,13 +326,12 @@ export const apiFetch = async (endpoint, options = {}) => {
         if (path === '/reworks/start' && method === 'PATCH') {
             const { reworkId } = body || {};
             const { error } = await supabase.from('reworks')
-                .update({ status: 'in_progress', started_at: new Date().toISOString() })
-                .eq('id', reworkId);
+                .update({ status: 'in_progress', started_at: new Date().toISOString() }).eq('id', reworkId);
             if (error) throw error;
             return { success: true };
         }
 
-        // ── ATTENDANCE ───────────────────────────────────────────
+        // ── ATTENDANCE ────────────────────────────────────────────────────────
         if (path === '/attendance/my/today' && method === 'GET') {
             const staffId = getCurrentStaffId();
             if (!staffId) return { success: true, data: null };
@@ -389,7 +361,8 @@ export const apiFetch = async (endpoint, options = {}) => {
             const today = new Date().toISOString().split('T')[0];
             const { data: existing } = await supabase.from('attendance').select('id').eq('staff_id', staffId).eq('date', today).maybeSingle();
             if (existing) throw new Error('Already checked in today');
-            const { error } = await supabase.from('attendance').insert({ staff_id: staffId, date: today, check_in: new Date().toISOString(), status: 'present' });
+            const { error } = await supabase.from('attendance')
+                .insert({ staff_id: staffId, date: today, check_in: new Date().toISOString(), status: 'present' });
             if (error) throw error;
             return { success: true };
         }
@@ -398,7 +371,9 @@ export const apiFetch = async (endpoint, options = {}) => {
             const staffId = getCurrentStaffId();
             if (!staffId) throw new Error('Not authenticated as staff');
             const today = new Date().toISOString().split('T')[0];
-            const { error } = await supabase.from('attendance').update({ check_out: new Date().toISOString(), status: 'completed' }).eq('staff_id', staffId).eq('date', today);
+            const { error } = await supabase.from('attendance')
+                .update({ check_out: new Date().toISOString(), status: 'completed' })
+                .eq('staff_id', staffId).eq('date', today);
             if (error) throw error;
             return { success: true };
         }
@@ -409,7 +384,6 @@ export const apiFetch = async (endpoint, options = {}) => {
             const mStr = String(m).padStart(2, '0');
             const lastDay = new Date(y, m, 0).getDate();
             const start = `${y}-${mStr}-01`, end = `${y}-${mStr}-${lastDay}`;
-
             const [{ data: staffList }, { data: records }] = await Promise.all([
                 supabase.from('staff').select('id, name, email, staff_code').eq('status', 'active'),
                 supabase.from('attendance').select('staff_id, status, check_in, check_out').gte('date', start).lte('date', end),
@@ -443,7 +417,6 @@ export const apiFetch = async (endpoint, options = {}) => {
         if (adminAttStaffMatch && method === 'GET') {
             const staffId = adminAttStaffMatch[1];
             const y = params.year, mo = params.month;
-
             const { data: staffData } = await supabase.from('staff').select('id, name, email, staff_code').eq('id', staffId).single();
             let q = supabase.from('attendance').select('*').eq('staff_id', staffId).order('date', { ascending: false });
             if (y && mo) {
@@ -453,7 +426,6 @@ export const apiFetch = async (endpoint, options = {}) => {
             }
             if (params.limit) q = q.limit(parseInt(params.limit));
             const { data: records } = await q;
-
             const presentDays = (records || []).filter(r => r.status === 'present' || r.status === 'completed').length;
             const totalHours = (records || []).reduce((sum, r) => {
                 if (r.check_in && r.check_out) return sum + (new Date(r.check_out) - new Date(r.check_in)) / 3600000;
@@ -476,15 +448,10 @@ export const apiFetch = async (endpoint, options = {}) => {
     }
 };
 
-// ─────────────────────────────────────────────────────────────────
-// mapBackendTaskToFrontend
-// Used by Dashboard, Tasks, Reports, Rework pages
-// ─────────────────────────────────────────────────────────────────
 export const mapBackendTaskToFrontend = (bTask) => {
-    let id, taskName, clientName, assignedAt, openedAt, completedAt, staffName, status, docs, docCount;
+    let id, taskName, clientName, assignedAt, openedAt, completedAt, staffName, status, docs, docCount, source, taskCode, clientCode, clientIdRaw;
 
     if (bTask.task && bTask.client && !bTask.client_name) {
-        // Legacy nested format
         id          = bTask.task.id || bTask.id;
         taskName    = bTask.task.task_type || bTask.task.taskName;
         clientName  = bTask.client.name;
@@ -495,8 +462,11 @@ export const mapBackendTaskToFrontend = (bTask) => {
         status      = bTask.task.status;
         docs        = bTask.documents || [];
         docCount    = bTask.task.document_count ?? docs.length;
+        source      = bTask.task.source || 'crm';
+        taskCode    = bTask.task.task_code || null;
+        clientCode  = bTask.client.client_code || null;
+        clientIdRaw = bTask.client.id || null;
     } else {
-        // Flat format from Supabase
         id          = bTask.id;
         taskName    = bTask.task_type || 'Unknown Task';
         clientName  = bTask.client_name || bTask.client_id;
@@ -507,6 +477,10 @@ export const mapBackendTaskToFrontend = (bTask) => {
         status      = bTask.status;
         docs        = bTask.documents || [];
         docCount    = bTask.document_count ?? docs.length;
+        source      = bTask.source || 'crm';
+        taskCode    = bTask.task_code || null;   // JKT2026031807
+        clientCode  = bTask.client_code || null; // JKC2026031803
+        clientIdRaw = bTask.client_id_raw || null;
     }
 
     const formatDate = (dateStr) => {
@@ -534,6 +508,10 @@ export const mapBackendTaskToFrontend = (bTask) => {
         completedAt: formatDate(completedAt),
         users:       staffName,
         status:      formatStatus(status),
+        source,
+        task_code:   taskCode,    // JKT2026031807 — used as "Task ID" in UI & webhook
+        client_code: clientCode,  // JKC2026031803 — used as "Client ID" in UI & webhook
+        client_id:   clientIdRaw,
         docs,
         docCount,
         resultFile:  resultDoc ? { name: resultDoc.file_name, url: resultDoc.file_url } : null,
@@ -541,80 +519,44 @@ export const mapBackendTaskToFrontend = (bTask) => {
     };
 };
 
-// ─────────────────────────────────────────────────────────────────
-// File Upload Helpers — use these in TaskDetail.jsx & ReworkDetail.jsx
-// instead of the direct fetch calls to localhost:3000
-//
-// TaskDetail.jsx usage:
-//   import { uploadDocument } from '../api';
-//   const result = await uploadDocument(file, taskId, 'result'); // or 'attachment'
-//
-// ReworkDetail.jsx usage:
-//   import { uploadReworkDocument } from '../api';
-//   const result = await uploadReworkDocument(file, reworkId, 'result');
-// ─────────────────────────────────────────────────────────────────
-
 export const uploadDocument = async (file, taskId, docType = 'attachment') => {
     if (!file || !taskId) throw new Error('file and taskId required');
-
     const ext = file.name.split('.').pop();
     const storagePath = `tasks/${taskId}/${docType}_${Date.now()}.${ext}`;
-
     const { error: storageError } = await supabase.storage
-        .from('task-documents')
-        .upload(storagePath, file, { upsert: true });
+        .from('task-documents').upload(storagePath, file, { upsert: true });
     if (storageError) throw new Error('Storage upload failed: ' + storageError.message);
-
     const { data: { publicUrl } } = supabase.storage.from('task-documents').getPublicUrl(storagePath);
-
     const { error: dbError } = await supabase.from('documents').insert({
-        task_id:   taskId,
-        file_url:  publicUrl,
-        file_name: file.name,
-        file_type: file.type || ext,
-        doc_type:  docType,
+        task_id: taskId, file_url: publicUrl, file_name: file.name,
+        file_type: file.type || ext, doc_type: docType,
     });
     if (dbError) throw new Error('DB insert failed: ' + dbError.message);
-
     return { file_url: publicUrl, file_name: file.name };
 };
 
 export const uploadReworkDocument = async (file, reworkId, docType = 'attachment') => {
     if (!file || !reworkId) throw new Error('file and reworkId required');
-
     const ext = file.name.split('.').pop();
     const storagePath = `reworks/${reworkId}/${docType}_${Date.now()}.${ext}`;
-
     const { error: storageError } = await supabase.storage
-        .from('rework-documents')
-        .upload(storagePath, file, { upsert: true });
+        .from('rework-documents').upload(storagePath, file, { upsert: true });
     if (storageError) throw new Error('Storage upload failed: ' + storageError.message);
-
     const { data: { publicUrl } } = supabase.storage.from('rework-documents').getPublicUrl(storagePath);
-
     const updates = docType === 'result'
-        ? { status: 'completed', completed_at: new Date().toISOString() }
-        : {};
-
+        ? { status: 'completed', completed_at: new Date().toISOString() } : {};
     await Promise.all([
         supabase.from('rework_documents').insert({
-            rework_id: reworkId,
-            file_url:  publicUrl,
-            file_name: file.name,
-            file_type: file.type || ext,
-            doc_type:  docType,
+            rework_id: reworkId, file_url: publicUrl, file_name: file.name,
+            file_type: file.type || ext, doc_type: docType,
         }),
         Object.keys(updates).length
             ? supabase.from('reworks').update(updates).eq('id', reworkId)
             : Promise.resolve(),
     ]);
-
     return { file_url: publicUrl, file_name: file.name };
 };
 
-// ─────────────────────────────────────────────────────────────────
-// Realtime helpers (can be used directly by any component)
-// ─────────────────────────────────────────────────────────────────
 export const fetchTasks = async (staffId = null) => {
     let query = supabase.from('tasks').select(TASK_SELECT).order('assigned_at', { ascending: false });
     if (staffId) query = query.eq('assigned_staff', staffId);
@@ -625,19 +567,7 @@ export const fetchTasks = async (staffId = null) => {
 
 export const fetchTaskDocuments = async (taskId) => {
     const { data, error } = await supabase
-        .from('documents')
-        .select('id, file_url, file_name, file_type, doc_type, created_at')
-        .eq('task_id', taskId);
+        .from('documents').select('id, file_url, file_name, file_type, doc_type, created_at').eq('task_id', taskId);
     if (error) throw new Error(error.message);
     return data || [];
-};
-
-export const subscribeToNewTasks = (onNewTask) => {
-    const channel = supabase.channel('tasks-realtime')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tasks' },
-            (payload) => onNewTask(mapBackendTaskToFrontend(payload.new)))
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tasks' },
-            (payload) => onNewTask(mapBackendTaskToFrontend(payload.new)))
-        .subscribe();
-    return () => supabase.removeChannel(channel);
 };

@@ -4,43 +4,21 @@ import { useAuth } from '../context/AuthContext';
 export default function Login() {
     const { login } = useAuth();
     const [loading, setLoading] = useState(false);
-    // 'none' | 'admin' | 'staff'
-    const [mode, setMode] = useState('none');
+    const [mode, setMode] = useState('none'); // 'none' | 'admin' | 'staff'
     const [email, setEmail] = useState('');
     const [error, setError] = useState('');
 
     const handleLogin = async (e) => {
         e.preventDefault();
-        if (!email.trim()) {
-            setError('Please enter your email address');
-            return;
-        }
+        if (!email.trim()) { setError('Please enter your email address'); return; }
         setError('');
         setLoading(true);
         const success = await login('auto', email.trim().toLowerCase());
-        if (!success) {
-            setError('Email not found or account inactive.');
-        }
+        if (!success) setError('Email not found or account inactive.');
         setLoading(false);
     };
 
-    const handleAdminClick = () => {
-        setMode('admin');
-        setEmail('');
-        setError('');
-    };
-
-    const handleStaffClick = () => {
-        setMode('staff');
-        setEmail('');
-        setError('');
-    };
-
-    const handleBack = () => {
-        setMode('none');
-        setEmail('');
-        setError('');
-    };
+    const handleBack = () => { setMode('none'); setEmail(''); setError(''); };
 
     return (
         <div style={{
@@ -48,77 +26,100 @@ export default function Login() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'radial-gradient(circle at top left, #1e293b, #0f172a)'
+            background: 'radial-gradient(circle at top left, #1e293b, #0f172a)',
         }}>
             <div style={{
                 width: '100%',
-                maxWidth: '450px',
-                background: 'rgba(30, 41, 59, 0.7)',
+                maxWidth: '440px',
+                background: 'rgba(30, 41, 59, 0.75)',
                 backdropFilter: 'blur(20px)',
                 padding: '48px',
                 borderRadius: '32px',
                 border: '1px solid rgba(255,255,255,0.1)',
                 boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
-                textAlign: 'center'
+                textAlign: 'center',
             }}>
-                <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚖️</div>
-                <h1 style={{ fontSize: '28px', fontWeight: '800', marginBottom: '8px', letterSpacing: '-0.5px' }}>
-                    Tax Portal
-                </h1>
-                <p style={{ color: '#94a3b8', fontSize: '14px', marginBottom: '40px' }}>
-                    Authentication Required
-                </p>
+                {/* Logo / Brand */}
+                <div style={{ marginBottom: '32px' }}>
+                    <div style={{
+                        width: '72px', height: '72px',
+                        background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                        borderRadius: '20px',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '32px',
+                        margin: '0 auto 20px',
+                        boxShadow: '0 8px 24px rgba(99,102,241,0.4)',
+                    }}>
+                        ⚖️
+                    </div>
+                    <h1 style={{ fontSize: '26px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.5px', color: '#fff' }}>
+                        JK FINSTRIDE
+                    </h1>
+                    <p style={{ color: '#64748b', fontSize: '13px', margin: 0 }}>
+                        Staff Portal — Authentication Required
+                    </p>
+                </div>
 
-                {/* ── Default: 2 Buttons ── */}
+                {/* Mode: None — 2 buttons */}
                 {mode === 'none' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                         <button
-                            className="btn-primary"
                             style={{
-                                padding: '16px',
-                                fontSize: '16px',
+                                padding: '15px',
+                                fontSize: '15px',
+                                fontWeight: 700,
                                 background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
                                 border: 'none',
-                                justifyContent: 'center',
+                                borderRadius: '14px',
+                                color: '#fff',
                                 cursor: 'pointer',
+                                transition: 'all 0.2s',
+                                width: '100%',
                             }}
-                            onClick={handleAdminClick}
+                            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+                            onClick={() => { setMode('admin'); setEmail(''); setError(''); }}
                         >
-                            Login as Administrator
+                            🔐 Login as Administrator
                         </button>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', margin: '4px 0' }}>
-                            <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.1)' }} />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.08)' }} />
                             <span style={{ fontSize: '12px', color: '#475569' }}>OR</span>
-                            <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.1)' }} />
+                            <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.08)' }} />
                         </div>
 
                         <button
-                            className="btn-sm"
                             style={{
-                                padding: '16px',
-                                fontSize: '16px',
+                                padding: '15px',
+                                fontSize: '15px',
+                                fontWeight: 600,
                                 background: 'rgba(255,255,255,0.05)',
                                 border: '1px solid rgba(255,255,255,0.1)',
-                                color: 'white',
+                                borderRadius: '14px',
+                                color: '#fff',
                                 cursor: 'pointer',
+                                transition: 'all 0.2s',
+                                width: '100%',
                             }}
-                            onClick={handleStaffClick}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+                            onClick={() => { setMode('staff'); setEmail(''); setError(''); }}
                         >
-                            Login as Staff Member
+                            👤 Login as Staff Member
                         </button>
                     </div>
                 )}
 
-                {/* ── Admin / Staff Email Input ── */}
+                {/* Mode: Admin / Staff — Email input */}
                 {(mode === 'admin' || mode === 'staff') && (
-                    <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
 
                         {/* Role label */}
                         <div style={{
-                            background: mode === 'admin' ? 'rgba(99,102,241,0.1)' : 'rgba(16,185,129,0.1)',
+                            background: mode === 'admin' ? 'rgba(99,102,241,0.12)' : 'rgba(16,185,129,0.12)',
                             border: `1px solid ${mode === 'admin' ? 'rgba(99,102,241,0.3)' : 'rgba(16,185,129,0.3)'}`,
-                            borderRadius: '10px',
+                            borderRadius: '12px',
                             padding: '10px 16px',
                             fontSize: '13px',
                             fontWeight: 700,
@@ -127,28 +128,29 @@ export default function Login() {
                             {mode === 'admin' ? '🔐 Administrator Login' : '👤 Staff Login'}
                         </div>
 
-                        {/* Email input */}
+                        {/* Email */}
                         <div style={{ textAlign: 'left' }}>
                             <label style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
                                 Email Address
                             </label>
                             <input
                                 type="email"
-                                placeholder={mode === 'admin' ? 'admin@taxportal.com' : 'staff1@taxportal.com'}
+                                placeholder={mode === 'admin' ? 'Enter Taxportal ID' : 'Enter Taxportal ID'}
                                 value={email}
                                 onChange={e => { setEmail(e.target.value); setError(''); }}
                                 autoFocus
                                 disabled={loading}
                                 style={{
                                     width: '100%',
-                                    padding: '14px 16px',
+                                    padding: '13px 16px',
                                     borderRadius: '12px',
                                     border: error ? '1px solid rgba(239,68,68,0.5)' : '1px solid rgba(255,255,255,0.1)',
                                     background: 'rgba(255,255,255,0.05)',
                                     color: '#fff',
-                                    fontSize: '15px',
+                                    fontSize: '14px',
                                     outline: 'none',
                                     boxSizing: 'border-box',
+                                    transition: 'border-color 0.2s',
                                 }}
                                 onFocus={e => e.target.style.borderColor = 'rgba(99,102,241,0.6)'}
                                 onBlur={e => e.target.style.borderColor = error ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.1)'}
@@ -157,35 +159,18 @@ export default function Login() {
 
                         {/* Error */}
                         {error && (
-                            <div style={{
-                                background: 'rgba(239,68,68,0.1)',
-                                border: '1px solid rgba(239,68,68,0.3)',
-                                borderRadius: '10px',
-                                padding: '10px 14px',
-                                fontSize: '13px',
-                                color: '#f87171',
-                                textAlign: 'left',
-                            }}>
+                            <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: '#f87171', textAlign: 'left' }}>
                                 ⚠️ {error}
                             </div>
                         )}
 
                         {/* Buttons */}
-                        <div style={{ display: 'flex', gap: '12px' }}>
+                        <div style={{ display: 'flex', gap: '10px' }}>
                             <button
                                 type="button"
                                 onClick={handleBack}
                                 disabled={loading}
-                                style={{
-                                    flex: 1,
-                                    padding: '14px',
-                                    fontSize: '14px',
-                                    background: 'rgba(255,255,255,0.05)',
-                                    border: '1px solid rgba(255,255,255,0.1)',
-                                    borderRadius: '12px',
-                                    color: '#94a3b8',
-                                    cursor: 'pointer',
-                                }}
+                                style={{ flex: 1, padding: '13px', fontSize: '14px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', color: '#94a3b8', cursor: 'pointer' }}
                             >
                                 ← Back
                             </button>
@@ -194,16 +179,15 @@ export default function Login() {
                                 disabled={loading || !email.trim()}
                                 style={{
                                     flex: 2,
-                                    padding: '14px',
-                                    fontSize: '15px',
+                                    padding: '13px',
+                                    fontSize: '14px',
                                     fontWeight: 700,
-                                    background: loading || !email.trim()
-                                        ? 'rgba(99,102,241,0.4)'
-                                        : 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                                    background: loading || !email.trim() ? 'rgba(99,102,241,0.4)' : 'linear-gradient(135deg, #6366f1, #4f46e5)',
                                     border: 'none',
                                     borderRadius: '12px',
                                     color: '#fff',
                                     cursor: loading || !email.trim() ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.2s',
                                 }}
                             >
                                 {loading ? '⏳ Verifying...' : '🔐 Sign In'}
@@ -212,9 +196,10 @@ export default function Login() {
                     </form>
                 )}
 
-                <p style={{ marginTop: '40px', fontSize: '11px', color: '#475569' }}>
-                    Authorized Personnel Only. <br />
-                    All sessions are monitored and logged.
+                <p style={{ marginTop: '32px', fontSize: '11px', color: '#334155', lineHeight: 1.6 }}>
+                    Authorized Personnel Only.<br />
+                    All sessions are monitored and logged.<br/>
+                    Powered by JHB Automations
                 </p>
             </div>
         </div>
