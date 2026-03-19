@@ -5,17 +5,6 @@ import useToast from '../hooks/useToast';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch, mapBackendTaskToFrontend } from '../api';
-import { socket } from '../utils/socket';
-
-// ── Readable code badge ──────────────────────────────────────────
-function CodeBadge({ code, color = '#a5b4fc', bg = 'rgba(99,102,241,0.15)' }) {
-    if (!code) return null;
-    return (
-        <span style={{ background: bg, color, padding: '2px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, fontFamily: 'monospace', letterSpacing: '0.5px' }}>
-            {code}
-        </span>
-    );
-}
 
 export default function Tasks() {
     const { toast, showToast } = useToast();
@@ -24,6 +13,10 @@ export default function Tasks() {
     const [allTasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(false);
     const [apiError, setApiError] = useState(null);
+    const [filterStatus, setFilterStatus] = useState('All');
+    const [showAssignModal, setShowAssignModal] = useState(false);
+    const [backendStaff, setBackendStaff] = useState([]);
+    const [newTask, setNewTask] = useState({ task: '', client: '', staffId: '' });
 
     const fetchTasks = async () => {
         setLoading(true);
@@ -45,37 +38,22 @@ export default function Tasks() {
         }
     };
 
-    useEffect(() => { if (role) fetchTasks(); }, [role]);
-
-    const handleRefresh = async () => { await fetchTasks(); showToast('✅', 'Tasks refreshed!'); };
-
     useEffect(() => {
-        const handleNewTask = (taskPayload) => {
-            const mappedTask = mapBackendTaskToFrontend(taskPayload);
-            setTasks(prev => { if (prev.some(t => t.id === mappedTask.id)) return prev; return [mappedTask, ...prev]; });
-            showToast('🚀', `New task: ${mappedTask.task}`);
-        };
-        const handleDeletedTask = (payload) => { if (payload?.id) setTasks(prev => prev.filter(t => t.id !== payload.id)); };
-        const handleTaskStatusUpdated = (payload) => {
-            setTasks(prev => prev.map(t => t.id === payload.taskId ? { ...t, status: payload.newStatus || payload.status } : t));
-        };
-        socket.on('new_task', handleNewTask);
-        socket.on('task_deleted', handleDeletedTask);
-        socket.on('task_status_updated', handleTaskStatusUpdated);
-        return () => { socket.off('new_task', handleNewTask); socket.off('task_deleted', handleDeletedTask); socket.off('task_status_updated', handleTaskStatusUpdated); };
-    }, [showToast]);
-
-    const [filterStatus, setFilterStatus] = useState('All');
-    const [showAssignModal, setShowAssignModal] = useState(false);
-    const [backendStaff, setBackendStaff] = useState([]);
+        if (role) fetchTasks();
+    }, [role]);
 
     useEffect(() => {
         if (role === 'admin') {
-            apiFetch('/admin/staff').then(res => { if (res.success && res.data) setBackendStaff(res.data); }).catch(() => {});
+            apiFetch('/admin/staff').then(res => {
+                if (res.success && res.data) setBackendStaff(res.data);
+            }).catch(() => {});
         }
     }, [role]);
 
-    const [newTask, setNewTask] = useState({ task: '', client: '', staffId: '' });
+    const handleRefresh = async () => {
+        await fetchTasks();
+        showToast('✅', 'Tasks refreshed!');
+    };
 
     const handleAddTask = async () => {
         if (!newTask.task || !newTask.client || !newTask.staffId) return showToast('⚠️', 'Fill task, client and staff');
@@ -85,13 +63,13 @@ export default function Tasks() {
                 body: JSON.stringify({ clientName: newTask.client, taskType: newTask.task, staffId: newTask.staffId })
             });
             if (data.success) {
-                showToast('🚀', `Task assigned! Code: ${data.data?.task_code || ''}`);
+                showToast('🚀', 'Task assigned successfully!');
                 fetchTasks();
                 setShowAssignModal(false);
                 setNewTask({ task: '', client: '', staffId: '' });
             }
         } catch (err) {
-            showToast('❌', 'Failed to assign task: ' + err.message);
+            showToast('❌', 'Failed: ' + err.message);
         }
     };
 
@@ -100,7 +78,7 @@ export default function Tasks() {
             try {
                 const data = await apiFetch(`/admin/tasks/${id}`, { method: 'DELETE' });
                 if (data.success) {
-                    showToast('🗑️', 'Task removed');
+                    showToast('🗑️', 'Task removed successfully');
                     setTasks(prev => prev.filter(t => t.id !== id));
                 }
             } catch (err) {
@@ -108,7 +86,7 @@ export default function Tasks() {
                     setTasks(prev => prev.filter(t => t.id !== id));
                     showToast('🗑️', 'Task removed from view');
                 } else {
-                    showToast('❌', 'Failed to delete: ' + err.message);
+                    showToast('❌', 'Failed to delete task: ' + err.message);
                 }
             }
         }
@@ -127,11 +105,6 @@ export default function Tasks() {
         } catch { return '—'; }
     };
 
-    const statusStyle = (s) => ({
-        color: s === 'Completed' ? '#34d399' : s === 'In-Progress' ? '#a5b4fc' : '#fbbf24',
-        bg:    s === 'Completed' ? 'rgba(16,185,129,0.15)' : s === 'In-Progress' ? 'rgba(99,102,241,0.15)' : 'rgba(245,158,11,0.15)',
-    });
-
     return (
         <div className="app-layout">
             <Sidebar />
@@ -142,7 +115,7 @@ export default function Tasks() {
                         {role === 'admin' && (
                             <button className="btn-primary" onClick={() => setShowAssignModal(true)}>+ New Assignment</button>
                         )}
-                        <button className="btn-sm" onClick={handleRefresh} title="Refresh">🔄</button>
+                        <button className="btn-sm" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }} onClick={handleRefresh} title="Refresh tasks">🔄</button>
                         <select className="btn-sm" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
                             <option value="All">All Status</option>
                             <option>Pending</option>
@@ -155,21 +128,23 @@ export default function Tasks() {
                 <div className="page-content">
                     <div className="table-card">
                         {apiError && (
-                            <div style={{ padding: '20px', color: '#ef4444', background: 'rgba(239,68,68,0.1)', borderRadius: '8px', border: '1px solid rgba(239,68,68,0.3)', margin: '16px 16px 0' }}>
-                                🔴 {apiError} <button className="btn-sm" style={{ marginLeft: '12px', color: '#ef4444' }} onClick={fetchTasks}>🔄 Retry</button>
+                            <div style={{ textAlign: 'center', padding: '20px', color: '#ef4444', background: 'rgba(239,68,68,0.1)', borderRadius: '8px', border: '1px solid rgba(239,68,68,0.3)', marginBottom: '20px' }}>
+                                <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>🔴 {apiError}</div>
+                                <button className="btn-sm" style={{ background: 'rgba(239,68,68,0.2)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }} onClick={fetchTasks}>🔄 Retry</button>
                             </div>
                         )}
-                        {loading && <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>⏳ Loading tasks...</div>}
+                        {loading && <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>⏳ Loading tasks...</div>}
                         {!loading && !apiError && allTasks.length === 0 && (
-                            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>📭 No tasks yet.</div>
+                            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                                <div style={{ fontSize: '14px', marginBottom: '10px' }}>📭 No tasks available</div>
+                            </div>
                         )}
-                        {!loading && allTasks.length > 0 && (
+                        {!loading && !apiError && allTasks.length > 0 && (
                             <table>
                                 <thead>
                                     <tr>
-                                        <th>TASK CODE</th>
+                                        <th>ASSIGNED</th>
                                         <th>TASK & CLIENT</th>
-                                        <th>CLIENT CODE</th>
                                         <th>STAFF</th>
                                         <th>OPENED</th>
                                         <th>COMPLETED</th>
@@ -180,53 +155,46 @@ export default function Tasks() {
                                 </thead>
                                 <tbody>
                                     {filteredTasks.length === 0 ? (
-                                        <tr><td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No tasks with status: {filterStatus}</td></tr>
-                                    ) : filteredTasks.map(t => {
-                                        const st = statusStyle(t.status);
-                                        return (
-                                            <tr key={t.id}>
-                                                <td>
-                                                    <CodeBadge code={t.task_code} />
-                                                </td>
-                                                <td>
-                                                    <div style={{ fontWeight: 600 }}>{t.task}</div>
-                                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{t.client}</div>
-                                                </td>
-                                                <td>
-                                                    <CodeBadge code={t.client_code} color="#e879f9" bg="rgba(232,121,249,0.15)" />
-                                                </td>
-                                                <td>
-                                                    <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>{t.users}</span>
-                                                </td>
-                                                <td style={{ fontSize: '12px', color: 'var(--accent)' }}>{t.openedAt !== '-' ? t.openedAt : '—'}</td>
-                                                <td style={{ fontSize: '12px', color: '#34d399' }}>{t.completedAt !== '-' ? t.completedAt : '—'}</td>
-                                                <td style={{ fontSize: '12px', color: '#e879f9', fontWeight: 600 }}>{getDuration(t.openedAt, t.completedAt)}</td>
-                                                <td>
-                                                    <span style={{ background: st.bg, color: st.color, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700 }}>
-                                                        {t.status}
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                                        <button className="btn-sm green" onClick={async () => {
-                                                            if (role !== 'admin') {
-                                                                try {
-                                                                    await apiFetch('/staff/tasks/start', { method: 'PATCH', body: JSON.stringify({ taskId: t.id }) });
-                                                                    await fetchTasks();
-                                                                } catch (err) { showToast('❌', err.message); }
+                                        <tr><td colSpan="8" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No tasks with status: {filterStatus}</td></tr>
+                                    ) : filteredTasks.map(t => (
+                                        <tr key={t.id}>
+                                            <td style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{t.assignedAt}</td>
+                                            <td>
+                                                <div style={{ fontWeight: 600 }}>{t.task}</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.client}</div>
+                                            </td>
+                                            <td><span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>{t.users}</span></td>
+                                            <td style={{ fontSize: '12px', color: 'var(--accent)' }}>{t.openedAt !== '-' ? t.openedAt : '—'}</td>
+                                            <td style={{ fontSize: '12px', color: '#34d399' }}>{t.completedAt !== '-' ? t.completedAt : '—'}</td>
+                                            <td style={{ fontSize: '12px', color: '#e879f9', fontWeight: 600 }}>{getDuration(t.openedAt, t.completedAt)}</td>
+                                            <td>
+                                                <span className={`badge ${t.status === 'Completed' ? 'pan' : t.status === 'In-Progress' ? 'entity' : 'orange'}`}>
+                                                    {t.status}
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div style={{ display: 'flex', gap: '8px' }}>
+                                                    <button className="btn-sm green" onClick={async () => {
+                                                        if (role !== 'admin') {
+                                                            try {
+                                                                await apiFetch('/staff/tasks/start', { method: 'PATCH', body: JSON.stringify({ taskId: t.id }) });
+                                                                showToast('✅', 'Task started!');
+                                                                await fetchTasks();
+                                                            } catch (err) {
+                                                                showToast('❌', 'Failed: ' + err.message);
                                                             }
-                                                            navigate(`/tasks/${t.id}`);
-                                                        }}>
-                                                            {role === 'admin' ? '👁️ View' : '🚀 Start'}
-                                                        </button>
-                                                        {role === 'admin' && (
-                                                            <button className="btn-sm" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }} onClick={() => handleDeleteTask(t.id)}>🗑️</button>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
+                                                        }
+                                                        navigate(`/tasks/${t.id}`);
+                                                    }}>
+                                                        {role === 'admin' ? '👁️ View' : '👁️ View & Start'}
+                                                    </button>
+                                                    {role === 'admin' && (
+                                                        <button className="btn-sm" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }} onClick={() => handleDeleteTask(t.id)}>🗑️</button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
                                 </tbody>
                             </table>
                         )}
@@ -251,7 +219,7 @@ export default function Tasks() {
                             <select className="form-input" value={newTask.staffId} onChange={e => setNewTask({ ...newTask, staffId: e.target.value })}>
                                 <option value="">-- Select Staff --</option>
                                 {backendStaff.map(s => (
-                                    <option key={s.id} value={s.id}>[{s.staff_code || 'S???'}] {s.name}</option>
+                                    <option key={s.id} value={s.id}>[{s.staff_code || 'S???'}] {s.name} ({s.category})</option>
                                 ))}
                             </select>
                         </div>

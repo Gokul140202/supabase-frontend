@@ -15,17 +15,22 @@ export const getAuthHeaders = () => {
     return {};
 };
 
+// UUID format validate — "STF-01" போன்ற old format-ஐ reject பண்ணும்
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const getCurrentStaffId = () => {
     const userRaw = localStorage.getItem('sp_auth_user');
     if (!userRaw) return null;
     try {
         const user = JSON.parse(userRaw);
-        if (user.id && user.id !== 'ADM-01' && user.role === 'staff') return user.id;
+        // UUID format மட்டும் return பண்ணு — STF-01, ADM-01 போன்றவை reject
+        if (user.id && user.role === 'staff' && UUID_REGEX.test(user.id)) return user.id;
         return null;
     } catch { return null; }
 };
 
-
+// ── task_code & rework_code select-ல include பண்ணி இருக்கோம் ──────────────
+// இல்லன்னா task.task_code null ஆகும், UUID fallback ஆகும்
 const TASK_SELECT = `
     id, task_type, status, assigned_at, started_at, completed_at,
     notes, created_at, updated_at, priority, deadline, source, task_code,
@@ -176,7 +181,7 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true };
         }
 
-        
+        // ── ADMIN: Complete task (admin source மட்டும்) ───────────────────────
         if (path === '/admin/tasks/complete' && method === 'PATCH') {
             const { taskId } = body || {};
             if (!taskId) throw new Error('taskId required');

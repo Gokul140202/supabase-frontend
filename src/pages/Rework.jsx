@@ -5,15 +5,18 @@ import useToast from '../hooks/useToast';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch, mapBackendTaskToFrontend } from '../api';
-import { socket } from '../utils/socket';
 
 export default function Rework() {
     const { toast, showToast } = useToast();
     const navigate = useNavigate();
-    const { role, user } = useAuth();
+    const { role } = useAuth();
     const [allReworks, setReworks] = useState([]);
     const [loading, setLoading] = useState(false);
     const [apiError, setApiError] = useState(null);
+    const [filterStatus, setFilterStatus] = useState('All');
+    const [showAssignModal, setShowAssignModal] = useState(false);
+    const [backendStaff, setBackendStaff] = useState([]);
+    const [newRework, setNewRework] = useState({ task: '', client: '', staffId: '', reason: '' });
 
     const fetchReworks = async () => {
         setLoading(true);
@@ -22,8 +25,7 @@ export default function Rework() {
             const endpoint = role === 'admin' ? '/admin/reworks' : '/staff/reworks';
             const data = await apiFetch(endpoint);
             if (data.success && data.data && data.data.length > 0) {
-                const mapped = data.data.map(mapBackendTaskToFrontend);
-                setReworks(mapped);
+                setReworks(data.data.map(mapBackendTaskToFrontend));
             } else {
                 setReworks([]);
                 if (!data.success) setApiError('Failed to load reworks');
@@ -40,54 +42,6 @@ export default function Rework() {
         if (role) fetchReworks();
     }, [role]);
 
-    const handleRefresh = async () => {
-        await fetchReworks();
-        showToast('✅', 'Reworks refreshed!');
-    };
-
-    // Real-time updates
-    useEffect(() => {
-        const handleNewRework = (payload) => {
-            const mapped = mapBackendTaskToFrontend(payload);
-            setReworks(prev => {
-                if (prev.some(r => r.id === mapped.id)) return prev;
-                return [mapped, ...prev];
-            });
-            showToast('🔄', `New rework: ${mapped.task}`);
-        };
-
-        const handleDeletedRework = (payload) => {
-            if (payload && payload.id) {
-                setReworks(prev => prev.filter(r => r.id !== payload.id));
-            }
-        };
-
-        const handleReworkStatusUpdated = (payload) => {
-            setReworks(prev =>
-                prev.map(r => {
-                    if (r.id === payload.reworkId) {
-                        return { ...r, status: payload.newStatus || payload.status };
-                    }
-                    return r;
-                })
-            );
-        };
-
-        socket.on('new_rework', handleNewRework);
-        socket.on('rework_deleted', handleDeletedRework);
-        socket.on('rework_status_updated', handleReworkStatusUpdated);
-
-        return () => {
-            socket.off('new_rework', handleNewRework);
-            socket.off('rework_deleted', handleDeletedRework);
-            socket.off('rework_status_updated', handleReworkStatusUpdated);
-        };
-    }, [showToast]);
-
-    const [filterStatus, setFilterStatus] = useState('All');
-    const [showAssignModal, setShowAssignModal] = useState(false);
-
-    const [backendStaff, setBackendStaff] = useState([]);
     useEffect(() => {
         if (role === 'admin') {
             apiFetch('/admin/staff').then(res => {
@@ -96,22 +50,18 @@ export default function Rework() {
         }
     }, [role]);
 
-    const [newRework, setNewRework] = useState({ task: '', client: '', staffId: '', reason: '' });
+    const handleRefresh = async () => {
+        await fetchReworks();
+        showToast('✅', 'Reworks refreshed!');
+    };
 
     const handleAddRework = async () => {
         if (!newRework.task || !newRework.client || !newRework.staffId) return showToast('⚠️', 'Fill task, client and staff');
-
         try {
             const data = await apiFetch('/admin/create-rework', {
                 method: 'POST',
-                body: JSON.stringify({
-                    clientName: newRework.client,
-                    taskType: newRework.task,
-                    staffId: newRework.staffId,
-                    reworkReason: newRework.reason || null
-                })
+                body: JSON.stringify({ clientName: newRework.client, taskType: newRework.task, staffId: newRework.staffId, reworkReason: newRework.reason || null })
             });
-
             if (data.success) {
                 showToast('🔄', 'Rework assigned successfully!');
                 fetchReworks();
@@ -119,7 +69,7 @@ export default function Rework() {
                 setNewRework({ task: '', client: '', staffId: '', reason: '' });
             }
         } catch (err) {
-            showToast('❌', 'Failed to create rework: ' + err.message);
+            showToast('❌', 'Failed: ' + err.message);
         }
     };
 
@@ -142,22 +92,15 @@ export default function Rework() {
         }
     };
 
-    const filteredReworks = allReworks.filter(r => {
-        return filterStatus === 'All' || r.status === filterStatus;
-    });
+    const filteredReworks = allReworks.filter(r => filterStatus === 'All' || r.status === filterStatus);
 
     const getDuration = (start, end) => {
         if (!start || start === '-' || !end || end === '-') return '—';
         try {
-            const s = new Date(start);
-            const e = new Date(end);
-            const diff = Math.abs(e - s);
+            const diff = Math.abs(new Date(end) - new Date(start));
             const hours = Math.floor(diff / 3600000);
             const minutes = Math.floor((diff % 3600000) / 60000);
-            if (hours >= 24) {
-                const days = Math.floor(hours / 24);
-                return `${days}d ${hours % 24}h ${minutes}m`;
-            }
+            if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h ${minutes}m`;
             return `${hours}h ${minutes}m`;
         } catch { return '—'; }
     };
@@ -185,87 +128,80 @@ export default function Rework() {
                 <div className="page-content">
                     <div className="table-card">
                         {apiError && (
-                            <div style={{ textAlign: 'center', padding: '20px', color: '#ef4444', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.3)', marginBottom: '20px' }}>
+                            <div style={{ textAlign: 'center', padding: '20px', color: '#ef4444', background: 'rgba(239,68,68,0.1)', borderRadius: '8px', border: '1px solid rgba(239,68,68,0.3)', marginBottom: '20px' }}>
                                 <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>🔴 {apiError}</div>
-                                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>Please check the server or try again.</div>
-                                <button className="btn-sm" style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)' }} onClick={fetchReworks}>🔄 Retry</button>
+                                <button className="btn-sm" style={{ background: 'rgba(239,68,68,0.2)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }} onClick={fetchReworks}>🔄 Retry</button>
                             </div>
                         )}
                         {loading && <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>⏳ Loading reworks...</div>}
                         {!loading && !apiError && allReworks.length === 0 && (
-                            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                                 <div style={{ fontSize: '14px', marginBottom: '10px' }}>📭 No reworks available</div>
-                                <div style={{ fontSize: '12px' }}>No reworks have been assigned yet.</div>
                             </div>
                         )}
                         {!loading && !apiError && allReworks.length > 0 && (
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>ASSIGNED</th>
-                                    <th>TASK & CLIENT</th>
-                                    <th>STAFF</th>
-                                    <th>OPENED</th>
-                                    <th>COMPLETED</th>
-                                    <th>DURATION</th>
-                                    <th>STATUS</th>
-                                    <th>ACTION</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredReworks.length === 0 ? (
-                                    <tr><td colSpan="8" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No reworks with status: {filterStatus}</td></tr>
-                                ) : filteredReworks.map((r) => (
-                                    <tr key={r.id}>
-                                        <td style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{r.assignedAt}</td>
-                                        <td>
-                                            <div style={{ fontWeight: 600 }}>{r.task}</div>
-                                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{r.client}</div>
-                                        </td>
-                                        <td><span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>{r.users}</span></td>
-                                        <td style={{ fontSize: '12px', color: 'var(--accent)' }}>{r.openedAt !== '-' ? r.openedAt : '—'}</td>
-                                        <td style={{ fontSize: '12px', color: '#34d399' }}>{r.completedAt !== '-' ? r.completedAt : '—'}</td>
-                                        <td style={{ fontSize: '12px', color: '#e879f9', fontWeight: 600 }}>{getDuration(r.openedAt, r.completedAt)}</td>
-                                        <td>
-                                            <span className={`badge ${r.status === 'Completed' ? 'pan' : r.status === 'In-Progress' ? 'entity' : 'orange'}`}>
-                                                {r.status}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <div style={{ display: 'flex', gap: '8px' }}>
-                                                <button className="btn-sm green" onClick={async () => {
-                                                    if (role !== 'admin') {
-                                                        try {
-                                                            await apiFetch('/reworks/start', {
-                                                                method: 'PATCH',
-                                                                body: JSON.stringify({ reworkId: r.id })
-                                                            });
-                                                            showToast('✅', 'Rework started!');
-                                                            await fetchReworks();
-                                                        } catch (err) {
-                                                            console.error('Failed to start rework:', err);
-                                                            showToast('❌', 'Failed to start: ' + err.message);
-                                                        }
-                                                    }
-                                                    navigate(`/rework/${r.id}`);
-                                                }}>
-                                                    {role === 'admin' ? '👁️ View' : '👁️ View & Start'}
-                                                </button>
-                                                {role === 'admin' && (
-                                                    <button className="btn-sm" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)' }} onClick={() => handleDeleteRework(r.id)}>🗑️</button>
-                                                )}
-                                            </div>
-                                        </td>
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>ASSIGNED</th>
+                                        <th>TASK & CLIENT</th>
+                                        <th>STAFF</th>
+                                        <th>OPENED</th>
+                                        <th>COMPLETED</th>
+                                        <th>DURATION</th>
+                                        <th>STATUS</th>
+                                        <th>ACTION</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    {filteredReworks.length === 0 ? (
+                                        <tr><td colSpan="8" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No reworks with status: {filterStatus}</td></tr>
+                                    ) : filteredReworks.map(r => (
+                                        <tr key={r.id}>
+                                            <td style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{r.assignedAt}</td>
+                                            <td>
+                                                <div style={{ fontWeight: 600 }}>{r.task}</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{r.client}</div>
+                                            </td>
+                                            <td><span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>{r.users}</span></td>
+                                            <td style={{ fontSize: '12px', color: 'var(--accent)' }}>{r.openedAt !== '-' ? r.openedAt : '—'}</td>
+                                            <td style={{ fontSize: '12px', color: '#34d399' }}>{r.completedAt !== '-' ? r.completedAt : '—'}</td>
+                                            <td style={{ fontSize: '12px', color: '#e879f9', fontWeight: 600 }}>{getDuration(r.openedAt, r.completedAt)}</td>
+                                            <td>
+                                                <span className={`badge ${r.status === 'Completed' ? 'pan' : r.status === 'In-Progress' ? 'entity' : 'orange'}`}>
+                                                    {r.status}
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div style={{ display: 'flex', gap: '8px' }}>
+                                                    <button className="btn-sm green" onClick={async () => {
+                                                        if (role !== 'admin') {
+                                                            try {
+                                                                await apiFetch('/reworks/start', { method: 'PATCH', body: JSON.stringify({ reworkId: r.id }) });
+                                                                showToast('✅', 'Rework started!');
+                                                                await fetchReworks();
+                                                            } catch (err) {
+                                                                showToast('❌', 'Failed: ' + err.message);
+                                                            }
+                                                        }
+                                                        navigate(`/rework/${r.id}`);
+                                                    }}>
+                                                        {role === 'admin' ? '👁️ View' : '👁️ View & Start'}
+                                                    </button>
+                                                    {role === 'admin' && (
+                                                        <button className="btn-sm" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }} onClick={() => handleDeleteRework(r.id)}>🗑️</button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         )}
                     </div>
                 </div>
             </div>
 
-            {/* ASSIGN REWORK MODAL */}
             {showAssignModal && (
                 <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowAssignModal(false)}>
                     <div className="form-card" style={{ width: '400px', background: 'var(--bg-secondary)', border: '1px solid var(--border-active)' }}>
@@ -282,7 +218,7 @@ export default function Rework() {
                             <label className="form-label">Assign To Staff</label>
                             <select className="form-input" value={newRework.staffId} onChange={e => setNewRework({ ...newRework, staffId: e.target.value })}>
                                 <option value="">-- Select Staff --</option>
-                                {backendStaff.map((s) => (
+                                {backendStaff.map(s => (
                                     <option key={s.id} value={s.id}>[{s.staff_code || 'S???'}] {s.name} ({s.category})</option>
                                 ))}
                             </select>

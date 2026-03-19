@@ -56,7 +56,7 @@ export default function TaskDetail() {
             });
             setEditingClientName(false);
             showToast('✅', 'Client name updated!');
-            await fetchTaskDetails();  // re-render with new data
+            await fetchTaskDetails();
         } catch (err) {
             showToast('❌', 'Failed: ' + err.message);
         } finally {
@@ -74,7 +74,7 @@ export default function TaskDetail() {
             });
             setEditingFileId(null);
             showToast('✅', 'File name updated!');
-            await fetchTaskDetails();  // re-render with new data
+            await fetchTaskDetails();
         } catch (err) {
             showToast('❌', 'Failed: ' + err.message);
         } finally {
@@ -116,7 +116,9 @@ export default function TaskDetail() {
     const statusName      = formatStatus(task.status);
     const taskSource      = task.source || 'crm';
     const allDocuments    = task.documents || [];
-    const documents       = allDocuments.filter(d => d.doc_type !== 'result');
+    // ── CHANGE: CRM docs + staff docs ஒரே section-ல (result மட்டும் தனியா) ──
+    const documents       = allDocuments.filter(d => d.doc_type !== 'result');   // attachment + CRM docs both
+    const crmDocuments    = allDocuments.filter(d => d.doc_type !== 'result' && d.doc_type !== 'attachment'); // summary-க்காக மட்டும்
     const resultDocuments = allDocuments.filter(d => d.doc_type === 'result');
 
     const statusColor = statusName === 'Completed' ? '#10b981' : statusName === 'In-Progress' ? '#6366f1' : '#f59e0b';
@@ -164,12 +166,10 @@ export default function TaskDetail() {
             showToast('✅', 'Result uploaded successfully!');
             await fetchTaskDetails();
 
-            // ── CRM Webhook ─────────────────────────────────────
-            // task_id = JKT format, client_id = JKC format
             const webhookPayload = {
                 event:         'result_uploaded',
-                task_id:       task.task_code   || taskUUID,          // JKT2026031807
-                client_id:     task.client_code || task.client_id,    // JKC2026031803
+                task_id:       task.task_code   || taskUUID,
+                client_id:     task.client_code || task.client_id,
                 task_type:     task.task_type   || 'N/A',
                 client_name:   task.client_name  || 'N/A',
                 mobile_number: task.client_phone || 'N/A',
@@ -209,6 +209,14 @@ export default function TaskDetail() {
 
     const docIcon = (name) => ({ pdf:'📕',doc:'📘',docx:'📘',xls:'📗',xlsx:'📗',jpg:'🖼️',jpeg:'🖼️',png:'🖼️',zip:'📦',tax:'💸' })[(name||'').split('.').pop().toLowerCase()] || '📄';
 
+    const openFile = (url, name) => {
+        if (!url || url === '[]' || url === '' || url === 'null' || url.startsWith('[')) {
+            showToast('❌', `"${name}" — file URL invalid. CRM-ல file properly attach பண்ணி retry பண்ணுங்க.`);
+            return;
+        }
+        window.open(url, '_blank');
+    };
+
     return (
         <div className="app-layout">
             <Sidebar />
@@ -236,13 +244,7 @@ export default function TaskDetail() {
                     {/* LEFT */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
-                        {/* CRM lock notice */}
-                        {role === 'admin' && taskSource === 'crm' && statusName !== 'Completed' && (
-                            <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px', color: '#fbbf24' }}>
-                                <span style={{ fontSize: '20px' }}>🔗</span>
-                                <span>இந்த task CRM-லிருந்து வந்தது — Staff result upload பண்ணும்போது automatically complete ஆகும்.</span>
-                            </div>
-                        )}
+                                  
 
                         {/* Task Info */}
                         <div className="form-card" style={{ background: 'var(--bg-secondary)', borderTop: '4px solid var(--accent)' }}>
@@ -271,7 +273,6 @@ export default function TaskDetail() {
                             <h2 style={{ fontSize: '16px', marginBottom: '20px' }}>👤 Client Information</h2>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
 
-                                {/* Client ID — read only */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Client ID</span>
                                     <span style={{ fontSize: '14px', fontWeight: 700, background: 'rgba(16,185,129,0.15)', color: '#34d399', padding: '2px 10px', borderRadius: '6px', fontFamily: 'monospace' }}>
@@ -279,7 +280,6 @@ export default function TaskDetail() {
                                     </span>
                                 </div>
 
-                                {/* Name — inline editable */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Name</span>
                                     {editingClientName ? (
@@ -306,13 +306,11 @@ export default function TaskDetail() {
                                     )}
                                 </div>
 
-                                {/* Phone — read only */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Phone</span>
                                     <span style={{ fontSize: '14px', fontWeight: 600, color: '#e879f9' }}>{task.client_phone || 'N/A'}</span>
                                 </div>
 
-                                {/* Email — read only */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Email</span>
                                     <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{task.client_email || 'No Email Provided'}</span>
@@ -321,66 +319,89 @@ export default function TaskDetail() {
                             </div>
                         </div>
 
-                        {/* Documents */}
+                        {/* Attached Documents — CRM docs + staff docs ஒரே section-ல */}
                         <div className="form-card" style={{ background: 'var(--bg-secondary)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                                 <h2 style={{ fontSize: '16px', margin: 0 }}>
                                     📁 Attached Documents
                                     {documents.length > 0 && <span style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', padding: '2px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, marginLeft: '8px' }}>{documents.length}</span>}
                                 </h2>
-                                <label>
-                                    <input key={docInputKey} type="file" accept={acceptFormats} onChange={handleUploadDocument} disabled={uploadingDoc} style={{ display: 'none' }} />
-                                    <span className="btn-sm" style={{ cursor: uploadingDoc ? 'not-allowed' : 'pointer', opacity: uploadingDoc ? 0.6 : 1, background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.3)' }}
-                                        onClick={() => { setDocInputKey(Date.now()); setTimeout(() => document.getElementById(`doc-upload-${id}`)?.click(), 0); }}>
-                                        {uploadingDoc ? '⏳ Uploading...' : '📤 Upload Document'}
-                                    </span>
-                                    <input id={`doc-upload-${id}`} type="file" accept={acceptFormats} onChange={handleUploadDocument} disabled={uploadingDoc} style={{ display: 'none' }} />
-                                </label>
+                                {/* Single hidden input, span directly clicks it */}
+                                <input
+                                    key={docInputKey}
+                                    id={`doc-upload-${id}`}
+                                    type="file"
+                                    accept={acceptFormats}
+                                    onChange={handleUploadDocument}
+                                    disabled={uploadingDoc}
+                                    style={{ display: 'none' }}
+                                />
+                                <span
+                                    className="btn-sm"
+                                    style={{ cursor: uploadingDoc ? 'not-allowed' : 'pointer', opacity: uploadingDoc ? 0.6 : 1, background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.3)' }}
+                                    onClick={() => { if (!uploadingDoc) document.getElementById(`doc-upload-${id}`)?.click(); }}
+                                >
+                                    {uploadingDoc ? '⏳ Uploading...' : '📤 Upload Document'}
+                                </span>
                             </div>
                             {documents.length === 0
                                 ? <div style={{ textAlign: 'center', padding: '40px', border: '1px dashed var(--border)', borderRadius: '12px', color: 'var(--text-muted)' }}><div style={{ fontSize: '32px', marginBottom: '8px' }}>📂</div><div>No files attached yet.</div></div>
                                 : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px' }}>
-                                    {documents.map((d, i) => (
-                                        <div key={d.id || i} style={{ background: 'rgba(255,255,255,0.03)', padding: '20px', borderRadius: '16px', border: '1px solid var(--border)', textAlign: 'center', transition: 'all 0.3s' }}
-                                            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-active)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-                                            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
-                                            <div style={{ fontSize: '36px', marginBottom: '12px' }}>{docIcon(d.file_name)}</div>
+                                    {documents.map((d, i) => {
+                                        const isCrm = d.doc_type !== 'attachment';
+                                        const isInvalidUrl = !d.file_url || d.file_url === '[]' || d.file_url.startsWith('[');
+                                        return (
+                                            <div key={d.id || i} style={{ background: 'rgba(255,255,255,0.03)', padding: '20px', borderRadius: '16px', border: '1px solid var(--border)', textAlign: 'center', transition: 'all 0.3s' }}
+                                                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-active)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                                                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
+                                                <div style={{ fontSize: '36px', marginBottom: '12px' }}>{isInvalidUrl ? '⚠️' : docIcon(d.file_name)}</div>
 
-                                            {/* File name — inline editable */}
-                                            {editingFileId === d.id ? (
-                                                <div style={{ marginBottom: '8px' }}>
-                                                    <input
-                                                        autoFocus
-                                                        value={fileNameVal}
-                                                        onChange={e => setFileNameVal(e.target.value)}
-                                                        onKeyDown={e => { if (e.key === 'Enter') handleSaveFileName(d.id); if (e.key === 'Escape') setEditingFileId(null); }}
-                                                        style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: '6px', padding: '4px 6px', color: 'var(--text-primary)', fontSize: '11px', width: '100%', outline: 'none', textAlign: 'center' }}
-                                                    />
-                                                    <div style={{ display: 'flex', gap: '4px', marginTop: '6px', justifyContent: 'center' }}>
-                                                        <button className="btn-sm green" onClick={() => handleSaveFileName(d.id)} disabled={savingFileId === d.id} style={{ padding: '3px 8px', fontSize: '11px' }}>
-                                                            {savingFileId === d.id ? '⏳' : '✅'}
-                                                        </button>
-                                                        <button className="btn-sm" onClick={() => setEditingFileId(null)} style={{ padding: '3px 8px', fontSize: '11px' }}>✕</button>
+                                                {/* File name — inline editable (CRM docs-க்கும் attachment-க்கும்) */}
+                                                {editingFileId === d.id ? (
+                                                    <div style={{ marginBottom: '8px' }}>
+                                                        <input
+                                                            autoFocus
+                                                            value={fileNameVal}
+                                                            onChange={e => setFileNameVal(e.target.value)}
+                                                            onKeyDown={e => { if (e.key === 'Enter') handleSaveFileName(d.id); if (e.key === 'Escape') setEditingFileId(null); }}
+                                                            style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: '6px', padding: '4px 6px', color: 'var(--text-primary)', fontSize: '11px', width: '100%', outline: 'none', textAlign: 'center' }}
+                                                        />
+                                                        <div style={{ display: 'flex', gap: '4px', marginTop: '6px', justifyContent: 'center' }}>
+                                                            <button className="btn-sm green" onClick={() => handleSaveFileName(d.id)} disabled={savingFileId === d.id} style={{ padding: '3px 8px', fontSize: '11px' }}>
+                                                                {savingFileId === d.id ? '⏳' : '✅'}
+                                                            </button>
+                                                            <button className="btn-sm" onClick={() => setEditingFileId(null)} style={{ padding: '3px 8px', fontSize: '11px' }}>✕</button>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ) : (
-                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', marginBottom: '4px' }}>
-                                                    <div style={{ fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '120px' }} title={d.file_name}>{d.file_name || 'document'}</div>
-                                                    <button onClick={() => { setFileNameVal(d.file_name || ''); setEditingFileId(d.id); }}
-                                                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: 'var(--text-muted)', padding: '1px 2px', flexShrink: 0 }}
-                                                        title="Rename">✏️</button>
-                                                </div>
-                                            )}
+                                                ) : (
+                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', marginBottom: '4px' }}>
+                                                        <div style={{ fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '120px' }} title={d.file_name}>{d.file_name || 'document'}</div>
+                                                        <button onClick={() => { setFileNameVal(d.file_name || ''); setEditingFileId(d.id); }}
+                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: 'var(--text-muted)', padding: '1px 2px', flexShrink: 0 }}
+                                                            title="Rename">✏️</button>
+                                                    </div>
+                                                )}
 
-                                            <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '12px', textTransform: 'uppercase' }}>{(d.file_name||'').split('.').pop()} file</div>
-                                            <button className="btn-sm green" style={{ width: '100%', fontSize: '12px' }} onClick={() => window.open(d.file_url, '_blank')}>⬇️ Download</button>
-                                        </div>
-                                    ))}
+                                                {/* CRM / Staff badge */}
+                                                <div style={{ fontSize: '10px', marginBottom: '12px', fontWeight: 600, color: isInvalidUrl ? '#ef4444' : isCrm ? '#fbbf24' : 'var(--text-muted)', textTransform: 'uppercase' }}>
+                                                    {isInvalidUrl ? '❌ Invalid URL' : isCrm ? '🔗 CRM' : `${(d.file_name||'').split('.').pop()} file`}
+                                                </div>
+
+                                                <button
+                                                    className="btn-sm green"
+                                                    style={{ width: '100%', fontSize: '12px', ...(isInvalidUrl ? { background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' } : {}) }}
+                                                    onClick={() => openFile(d.file_url, d.file_name)}
+                                                >
+                                                    {isInvalidUrl ? '⚠️ Invalid' : '⬇️ Download'}
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             }
                         </div>
 
-                        {/* Result Upload — CRM task மட்டும் */}
+                        
                         {taskSource === 'crm' && (
                             <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #e879f9' }}>
                                 <h2 style={{ fontSize: '16px', marginBottom: '20px' }}>📤 Task Result</h2>
@@ -400,7 +421,7 @@ export default function TaskDetail() {
                                         <div style={{ textAlign: 'center', padding: '20px', background: 'rgba(232,121,249,0.1)', borderRadius: '12px', border: '1px solid rgba(232,121,249,0.3)' }}>
                                             <div style={{ fontSize: '28px', marginBottom: '8px' }}>✅</div>
                                             <div style={{ fontSize: '14px', fontWeight: 700, color: '#e879f9', marginBottom: '12px' }}>Result File Ready</div>
-                                            <button className="btn-sm green" style={{ width: '100%' }} onClick={() => window.open(d.file_url, '_blank')}>⬇️ {d.file_name}</button>
+                                            <button className="btn-sm green" style={{ width: '100%' }} onClick={() => openFile(d.file_url, d.file_name)}>⬇️ {d.file_name}</button>
                                         </div>
                                     );
                                 })()}
@@ -465,9 +486,9 @@ export default function TaskDetail() {
                             <h3 style={{ fontSize: '14px', marginBottom: '16px', color: 'var(--text-secondary)' }}>📊 Summary</h3>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                                 {[
-                                    { label: 'Attachments', value: documents.length, icon: '📁', color: '#a5b4fc' },
+                                    { label: 'CRM Docs',    value: crmDocuments.length,    icon: '🔗', color: '#fbbf24' },
+                                    { label: 'Attachments', value: documents.length - crmDocuments.length, icon: '📁', color: '#a5b4fc' },
                                     { label: 'Result Files', value: resultDocuments.length, icon: '📋', color: '#e879f9' },
-                                    { label: 'Total Files',  value: allDocuments.length, icon: '🗂️', color: '#34d399' },
                                 ].map((s, i) => (
                                     <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: '10px', border: '1px solid var(--border)' }}>
                                         <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{s.icon} {s.label}</span>

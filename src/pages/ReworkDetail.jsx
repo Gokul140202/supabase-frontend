@@ -17,8 +17,7 @@ export default function ReworkDetail() {
     const [uploading, setUploading] = useState(false);
     const [uploadingDoc, setUploadingDoc] = useState(false);
     const [docInputKey, setDocInputKey] = useState(Date.now());
-    const [crmDocs, setCrmDocs] = useState([]);  // documents table-லிருந்து CRM docs
-
+    const [crmDocs, setCrmDocs] = useState([]);  
     // ── Inline edit states ────────────────────────────────────────────────────
     const [editingFileId, setEditingFileId] = useState(null);
     const [fileNameVal, setFileNameVal] = useState('');
@@ -49,7 +48,7 @@ export default function ReworkDetail() {
             const data = await apiFetch(endpoint);
             if (data.success && data.data) {
                 setRework(data.data);
-                // CRM docs — documents table-லிருந்து same client+task_type
+                
                 try {
                     const crmData = await apiFetch(`/reworks/${id}/crm-documents`);
                     if (crmData.success) setCrmDocs(crmData.data || []);
@@ -150,23 +149,20 @@ export default function ReworkDetail() {
             if (storageError) throw new Error('Storage upload failed: ' + storageError.message);
             const { data: { publicUrl } } = supabase.storage.from('rework-documents').getPublicUrl(storagePath);
 
-            await Promise.all([
-                supabase.from('rework_documents').insert({
-                    rework_id: reworkUUID, file_url: publicUrl, file_name: file.name,
-                    file_type: file.type || ext, doc_type: 'result',
-                }),
-                supabase.from('reworks').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', reworkUUID),
-            ]);
+            
+            await supabase.from('rework_documents').insert({
+                rework_id: reworkUUID, file_url: publicUrl, file_name: file.name,
+                file_type: file.type || ext, doc_type: 'result',
+            });
 
-            showToast('✅', 'Result uploaded & rework completed!');
+            showToast('✅', 'Result uploaded.');
             await fetchRework();
 
-            // ── CRM Webhook ──────────────────────────────────────
-            // task_id = JKR format, client_id = JKC format
+            
             const webhookPayload = {
                 event:         'rework_result_uploaded',
-                task_id:       rework.rework_code  || reworkUUID,          // JKR2026031804
-                client_id:     rework.client_code  || rework.client_id,    // JKC2026031803
+                task_id:       rework.rework_code  || reworkUUID,
+                client_id:     rework.client_code  || rework.client_id,
                 task_type:     rework.task_type    || 'N/A',
                 client_name:   rework.client_name  || 'N/A',
                 mobile_number: rework.client_phone || 'N/A',
@@ -268,8 +264,7 @@ export default function ReworkDetail() {
                             {crmDocs.length === 0
                                 ? <div style={{ textAlign: 'center', padding: '32px', border: '1px dashed rgba(245,158,11,0.3)', borderRadius: '12px', color: 'var(--text-muted)' }}>
                                     <div style={{ fontSize: '28px', marginBottom: '8px' }}>📂</div>
-                                    <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>CRM-லிருந்து documents வரவில்லை</div>
-                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>GHL workflow-ல documents attach பண்ணி அனுப்பினால் இங்கே காட்டும்</div>
+                    
                                 </div>
                                 : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px' }}>
                                     {crmDocs.map((d, i) => (
