@@ -17,11 +17,12 @@ export default function ReworkDetail() {
     const [uploading, setUploading] = useState(false);
     const [uploadingDoc, setUploadingDoc] = useState(false);
     const [docInputKey, setDocInputKey] = useState(Date.now());
-    const [crmDocs, setCrmDocs] = useState([]);  
-    // ── Inline edit states ────────────────────────────────────────────────────
+    const [crmDocs, setCrmDocs] = useState([]);
     const [editingFileId, setEditingFileId] = useState(null);
     const [fileNameVal, setFileNameVal] = useState('');
     const [savingFileId, setSavingFileId] = useState(null);
+
+    const [completing, setCompleting] = useState(false);
 
     const handleSaveFileName = async (docId) => {
         if (!fileNameVal.trim() || savingFileId) return;
@@ -48,7 +49,6 @@ export default function ReworkDetail() {
             const data = await apiFetch(endpoint);
             if (data.success && data.data) {
                 setRework(data.data);
-                
                 try {
                     const crmData = await apiFetch(`/reworks/${id}/crm-documents`);
                     if (crmData.success) setCrmDocs(crmData.data || []);
@@ -59,6 +59,29 @@ export default function ReworkDetail() {
     };
 
     useEffect(() => { fetchRework(); }, [id, role]);
+
+    // ── Admin: Rework status change ──────────────────────────────────────────
+    const handleAdminStatusChange = async (newStatus) => {
+        if (completing) return;
+        setCompleting(true);
+        try {
+            const statusMap = { 'Pending': 'assigned', 'In-Progress': 'in_progress', 'Completed': 'completed' };
+            const res = await apiFetch('/admin/reworks/changestatus', {
+                method: 'PATCH',
+                body: JSON.stringify({ reworkId: rework.id, status: statusMap[newStatus] }),
+            });
+            if (res.success) {
+                showToast('✅', `Status changed to ${newStatus}`);
+                await fetchRework();
+            } else {
+                showToast('❌', res.error || 'Failed', true);
+            }
+        } catch (err) {
+            showToast('❌', 'Failed: ' + err.message, true);
+        } finally {
+            setCompleting(false);
+        }
+    };
 
     if (loading) return (
         <div className="app-layout"><Sidebar />
@@ -114,6 +137,22 @@ export default function ReworkDetail() {
         return true;
     };
 
+    // ── FIXED: Original filename-லயே download ஆகும் ────────────────────────
+    const openFile = (url, name) => {
+        if (!url || url === '[]' || url === '' || url === 'null' || url.startsWith('[')) {
+            showToast('❌', `"${name}" — file URL invalid.`);
+            return;
+        }
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name || 'document';
+        a.target = '_blank';
+        a.rel = 'noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    };
+
     const handleUploadDocument = async (e) => {
         const file = e.target.files?.[0];
         if (!file || !validateFile(file)) { e.target.value = ''; setDocInputKey(Date.now()); return; }
@@ -148,17 +187,13 @@ export default function ReworkDetail() {
             const { error: storageError } = await supabase.storage.from('rework-documents').upload(storagePath, file, { upsert: true });
             if (storageError) throw new Error('Storage upload failed: ' + storageError.message);
             const { data: { publicUrl } } = supabase.storage.from('rework-documents').getPublicUrl(storagePath);
-
-            
             await supabase.from('rework_documents').insert({
                 rework_id: reworkUUID, file_url: publicUrl, file_name: file.name,
                 file_type: file.type || ext, doc_type: 'result',
             });
-
             showToast('✅', 'Result uploaded.');
             await fetchRework();
 
-            
             const webhookPayload = {
                 event:         'rework_result_uploaded',
                 task_id:       rework.rework_code  || reworkUUID,
@@ -182,7 +217,6 @@ export default function ReworkDetail() {
                     'https://services.leadconnectorhq.com/hooks/GmLfYZp3rjJ0jWt1nZtb/webhook-trigger/c8acafca-2d52-4f75-a8b9-31b783957fdb',
                     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(webhookPayload) }
                 );
-                console.log('✅ CRM webhook → task_id:', webhookPayload.task_id, 'client_id:', webhookPayload.client_id);
             } catch (wErr) { console.warn('⚠️ CRM webhook failed:', wErr.message); }
 
         } catch (err) { showToast('❌', 'Failed: ' + err.message); }
@@ -201,7 +235,31 @@ export default function ReworkDetail() {
                         <h1 className="topbar-title">🔄 {taskName}</h1>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <span style={{ background: statusBg, color: statusColor, padding: '6px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, border: `1px solid ${statusColor}30` }}>{statusName}</span>
+                        {role === 'admin' ? (
+                            <select
+                                value={statusName}
+                                disabled={completing}
+                                onChange={e => handleAdminStatusChange(e.target.value)}
+                                style={{
+                                    background: statusBg,
+                                    color: statusColor,
+                                    border: `1px solid ${statusColor}50`,
+                                    padding: '6px 14px',
+                                    borderRadius: '10px',
+                                    fontSize: '13px',
+                                    fontWeight: 700,
+                                    cursor: completing ? 'not-allowed' : 'pointer',
+                                    outline: 'none',
+                                    opacity: completing ? 0.6 : 1,
+                                }}
+                            >
+                                <option value="Pending">⏳ Pending</option>
+                                <option value="In-Progress">🔄 In-Progress</option>
+                                <option value="Completed">✅ Completed</option>
+                            </select>
+                        ) : (
+                            <span style={{ background: statusBg, color: statusColor, padding: '6px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, border: `1px solid ${statusColor}30` }}>{statusName}</span>
+                        )}
                     </div>
                 </div>
 
@@ -250,21 +308,17 @@ export default function ReworkDetail() {
                             </div>
                         </div>
 
-                        {/* CRM Documents — mobile numberல send பண்ண docs மட்டும் */}
+                        {/* CRM Documents */}
                         <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #f59e0b' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
                                 <h2 style={{ fontSize: '16px', margin: 0 }}>📎 CRM Documents</h2>
                                 {crmDocs.length > 0 && (
-                                    <span style={{ background: 'rgba(245,158,11,0.15)', color: '#fbbf24', padding: '2px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 700 }}>
-                                        {crmDocs.length}
-                                    </span>
+                                    <span style={{ background: 'rgba(245,158,11,0.15)', color: '#fbbf24', padding: '2px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 700 }}>{crmDocs.length}</span>
                                 )}
-                        
                             </div>
                             {crmDocs.length === 0
                                 ? <div style={{ textAlign: 'center', padding: '32px', border: '1px dashed rgba(245,158,11,0.3)', borderRadius: '12px', color: 'var(--text-muted)' }}>
                                     <div style={{ fontSize: '28px', marginBottom: '8px' }}>📂</div>
-                    
                                 </div>
                                 : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px' }}>
                                     {crmDocs.map((d, i) => (
@@ -275,7 +329,7 @@ export default function ReworkDetail() {
                                             <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.file_name}>{d.file_name || 'document'}</div>
                                             <div style={{ fontSize: '10px', color: '#fbbf24', marginBottom: '10px', fontWeight: 600 }}>🔗 CRM</div>
                                             <button className="btn-sm" style={{ width: '100%', fontSize: '12px', background: 'rgba(245,158,11,0.15)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.3)' }}
-                                                onClick={() => window.open(d.file_url, '_blank')}>⬇️ Download</button>
+                                                onClick={() => openFile(d.file_url, d.file_name)}>⬇️ Download</button>
                                         </div>
                                     ))}
                                 </div>
@@ -301,7 +355,7 @@ export default function ReworkDetail() {
                                     <div style={{ textAlign: 'center', padding: '20px', background: 'rgba(232,121,249,0.1)', borderRadius: '12px', border: '1px solid rgba(232,121,249,0.3)' }}>
                                         <div style={{ fontSize: '28px', marginBottom: '8px' }}>✅</div>
                                         <div style={{ fontSize: '14px', fontWeight: 700, color: '#e879f9', marginBottom: '12px' }}>Result File Ready</div>
-                                        <button className="btn-sm green" style={{ width: '100%' }} onClick={() => window.open(d.file_url, '_blank')}>⬇️ {d.file_name}</button>
+                                        <button className="btn-sm green" style={{ width: '100%' }} onClick={() => openFile(d.file_url, d.file_name)}>⬇️ {d.file_name}</button>
                                     </div>
                                 );
                             })()}

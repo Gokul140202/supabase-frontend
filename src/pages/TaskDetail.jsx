@@ -18,7 +18,6 @@ export default function TaskDetail() {
     const [completing, setCompleting] = useState(false);
     const [docInputKey, setDocInputKey] = useState(Date.now());
 
-    // ── Inline edit states ────────────────────────────────────────────────────
     const [editingClientName, setEditingClientName] = useState(false);
     const [clientNameVal, setClientNameVal] = useState('');
     const [savingClientName, setSavingClientName] = useState(false);
@@ -116,9 +115,8 @@ export default function TaskDetail() {
     const statusName      = formatStatus(task.status);
     const taskSource      = task.source || 'crm';
     const allDocuments    = task.documents || [];
-    // ── CHANGE: CRM docs + staff docs ஒரே section-ல (result மட்டும் தனியா) ──
-    const documents       = allDocuments.filter(d => d.doc_type !== 'result');   // attachment + CRM docs both
-    const crmDocuments    = allDocuments.filter(d => d.doc_type !== 'result' && d.doc_type !== 'attachment'); // summary-க்காக மட்டும்
+    const documents       = allDocuments.filter(d => d.doc_type !== 'result');
+    const crmDocuments    = allDocuments.filter(d => d.doc_type !== 'result' && d.doc_type !== 'attachment');
     const resultDocuments = allDocuments.filter(d => d.doc_type === 'result');
 
     const statusColor = statusName === 'Completed' ? '#10b981' : statusName === 'In-Progress' ? '#6366f1' : '#f59e0b';
@@ -140,6 +138,22 @@ export default function TaskDetail() {
         const ext = '.' + file.name.split('.').pop().toLowerCase();
         if (!allowedExt.includes(ext)) { showToast('❌', `Invalid format (${ext})`); return false; }
         return true;
+    };
+
+    // ── FIXED: Original filename-லயே download ஆகும் ────────────────────────
+    const openFile = (url, name) => {
+        if (!url || url === '[]' || url === '' || url === 'null' || url.startsWith('[')) {
+            showToast('❌', `"${name}" — file URL invalid. CRM-ல file properly attach பண்ணி retry பண்ணுங்க.`);
+            return;
+        }
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name || 'document';
+        a.target = '_blank';
+        a.rel = 'noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
     };
 
     const handleUploadDocument = async (e) => {
@@ -188,7 +202,6 @@ export default function TaskDetail() {
                     'https://services.leadconnectorhq.com/hooks/GmLfYZp3rjJ0jWt1nZtb/webhook-trigger/c8acafca-2d52-4f75-a8b9-31b783957fdb',
                     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(webhookPayload) }
                 );
-                console.log('✅ CRM webhook → task_id:', webhookPayload.task_id, 'client_id:', webhookPayload.client_id);
             } catch (wErr) { console.warn('⚠️ CRM webhook failed:', wErr.message); }
 
         } catch (err) { showToast('❌', 'Upload failed: ' + err.message); }
@@ -207,21 +220,32 @@ export default function TaskDetail() {
         finally { setCompleting(false); }
     };
 
-    const docIcon = (name) => ({ pdf:'📕',doc:'📘',docx:'📘',xls:'📗',xlsx:'📗',jpg:'🖼️',jpeg:'🖼️',png:'🖼️',zip:'📦',tax:'💸' })[(name||'').split('.').pop().toLowerCase()] || '📄';
-
-    const openFile = (url, name) => {
-        if (!url || url === '[]' || url === '' || url === 'null' || url.startsWith('[')) {
-            showToast('❌', `"${name}" — file URL invalid. CRM-ல file properly attach பண்ணி retry பண்ணுங்க.`);
-            return;
-        }
-        window.open(url, '_blank');
+    // ── Admin: Status change (any status, any source) ─────────────────────
+    const handleAdminStatusChange = async (newStatus) => {
+        if (completing) return;
+        setCompleting(true);
+        try {
+            const statusMap = { 'Pending': 'assigned', 'In-Progress': 'in_progress', 'Completed': 'completed' };
+            const res = await apiFetch('/admin/tasks/changestatus', {
+                method: 'PATCH',
+                body: JSON.stringify({ taskId: task.id, status: statusMap[newStatus] }),
+            });
+            if (res.success) {
+                showToast('✅', `Status changed to ${newStatus}`);
+                await fetchTaskDetails();
+            } else {
+                showToast('❌', res.error || 'Failed', true);
+            }
+        } catch (err) { showToast('❌', 'Failed: ' + err.message, true); }
+        finally { setCompleting(false); }
     };
+
+    const docIcon = (name) => ({ pdf:'📕',doc:'📘',docx:'📘',xls:'📗',xlsx:'📗',jpg:'🖼️',jpeg:'🖼️',png:'🖼️',zip:'📦',tax:'💸' })[(name||'').split('.').pop().toLowerCase()] || '📄';
 
     return (
         <div className="app-layout">
             <Sidebar />
             <div className="main-content">
-                {/* TOPBAR */}
                 <div className="topbar">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
                         <button className="btn-sm" onClick={() => navigate('/tasks')}>← Back</button>
@@ -231,7 +255,32 @@ export default function TaskDetail() {
                         </span>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <span style={{ background: statusBg, color: statusColor, padding: '6px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, border: `1px solid ${statusColor}30` }}>{statusName}</span>
+                        {/* Admin: status dropdown */}
+                        {role === 'admin' ? (
+                            <select
+                                value={statusName}
+                                disabled={completing}
+                                onChange={e => handleAdminStatusChange(e.target.value)}
+                                style={{
+                                    background: statusBg,
+                                    color: statusColor,
+                                    border: `1px solid ${statusColor}50`,
+                                    padding: '6px 14px',
+                                    borderRadius: '10px',
+                                    fontSize: '13px',
+                                    fontWeight: 700,
+                                    cursor: completing ? 'not-allowed' : 'pointer',
+                                    outline: 'none',
+                                    opacity: completing ? 0.6 : 1,
+                                }}
+                            >
+                                <option value="Pending">⏳ Pending</option>
+                                <option value="In-Progress">🔄 In-Progress</option>
+                                <option value="Completed">✅ Completed</option>
+                            </select>
+                        ) : (
+                            <span style={{ background: statusBg, color: statusColor, padding: '6px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, border: `1px solid ${statusColor}30` }}>{statusName}</span>
+                        )}
                         {role === 'admin' && taskSource === 'admin' && statusName !== 'Completed' && (
                             <button className="btn-sm green" onClick={handleAdminComplete} disabled={completing} style={{ padding: '8px 16px', fontWeight: 700, opacity: completing ? 0.6 : 1 }}>
                                 {completing ? '⏳...' : '✅ Mark Complete'}
@@ -241,10 +290,7 @@ export default function TaskDetail() {
                 </div>
 
                 <div className="page-content" style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '24px' }}>
-                    {/* LEFT */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-
-                                  
 
                         {/* Task Info */}
                         <div className="form-card" style={{ background: 'var(--bg-secondary)', borderTop: '4px solid var(--accent)' }}>
@@ -272,75 +318,51 @@ export default function TaskDetail() {
                         <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #10b981' }}>
                             <h2 style={{ fontSize: '16px', marginBottom: '20px' }}>👤 Client Information</h2>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
-
                                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Client ID</span>
                                     <span style={{ fontSize: '14px', fontWeight: 700, background: 'rgba(16,185,129,0.15)', color: '#34d399', padding: '2px 10px', borderRadius: '6px', fontFamily: 'monospace' }}>
                                         {task.client_code || task.client_id || 'N/A'}
                                     </span>
                                 </div>
-
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Name</span>
                                     {editingClientName ? (
                                         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                                            <input
-                                                autoFocus
-                                                value={clientNameVal}
-                                                onChange={e => setClientNameVal(e.target.value)}
+                                            <input autoFocus value={clientNameVal} onChange={e => setClientNameVal(e.target.value)}
                                                 onKeyDown={e => { if (e.key === 'Enter') handleSaveClientName(); if (e.key === 'Escape') setEditingClientName(false); }}
-                                                style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: '8px', padding: '4px 10px', color: 'var(--text-primary)', fontSize: '14px', fontWeight: 600, width: '180px', outline: 'none' }}
-                                            />
-                                            <button className="btn-sm green" onClick={handleSaveClientName} disabled={savingClientName} style={{ padding: '4px 10px', fontSize: '12px' }}>
-                                                {savingClientName ? '⏳' : '✅'}
-                                            </button>
+                                                style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: '8px', padding: '4px 10px', color: 'var(--text-primary)', fontSize: '14px', fontWeight: 600, width: '180px', outline: 'none' }} />
+                                            <button className="btn-sm green" onClick={handleSaveClientName} disabled={savingClientName} style={{ padding: '4px 10px', fontSize: '12px' }}>{savingClientName ? '⏳' : '✅'}</button>
                                             <button className="btn-sm" onClick={() => setEditingClientName(false)} style={{ padding: '4px 10px', fontSize: '12px' }}>✕</button>
                                         </div>
                                     ) : (
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                             <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{task.client_name || 'N/A'}</span>
                                             <button onClick={() => { setClientNameVal(task.client_name || ''); setEditingClientName(true); }}
-                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: 'var(--text-muted)', padding: '2px 4px', borderRadius: '4px' }}
-                                                title="Edit name">✏️</button>
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: 'var(--text-muted)', padding: '2px 4px', borderRadius: '4px' }} title="Edit name">✏️</button>
                                         </div>
                                     )}
                                 </div>
-
                                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Phone</span>
                                     <span style={{ fontSize: '14px', fontWeight: 600, color: '#e879f9' }}>{task.client_phone || 'N/A'}</span>
                                 </div>
-
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Email</span>
                                     <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{task.client_email || 'No Email Provided'}</span>
                                 </div>
-
                             </div>
                         </div>
 
-                        {/* Attached Documents — CRM docs + staff docs ஒரே section-ல */}
+                        {/* Attached Documents */}
                         <div className="form-card" style={{ background: 'var(--bg-secondary)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                                 <h2 style={{ fontSize: '16px', margin: 0 }}>
                                     📁 Attached Documents
                                     {documents.length > 0 && <span style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', padding: '2px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, marginLeft: '8px' }}>{documents.length}</span>}
                                 </h2>
-                                {/* Single hidden input, span directly clicks it */}
-                                <input
-                                    key={docInputKey}
-                                    id={`doc-upload-${id}`}
-                                    type="file"
-                                    accept={acceptFormats}
-                                    onChange={handleUploadDocument}
-                                    disabled={uploadingDoc}
-                                    style={{ display: 'none' }}
-                                />
-                                <span
-                                    className="btn-sm"
-                                    style={{ cursor: uploadingDoc ? 'not-allowed' : 'pointer', opacity: uploadingDoc ? 0.6 : 1, background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.3)' }}
-                                    onClick={() => { if (!uploadingDoc) document.getElementById(`doc-upload-${id}`)?.click(); }}
-                                >
+                                <input key={docInputKey} id={`doc-upload-${id}`} type="file" accept={acceptFormats} onChange={handleUploadDocument} disabled={uploadingDoc} style={{ display: 'none' }} />
+                                <span className="btn-sm" style={{ cursor: uploadingDoc ? 'not-allowed' : 'pointer', opacity: uploadingDoc ? 0.6 : 1, background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.3)' }}
+                                    onClick={() => { if (!uploadingDoc) document.getElementById(`doc-upload-${id}`)?.click(); }}>
                                     {uploadingDoc ? '⏳ Uploading...' : '📤 Upload Document'}
                                 </span>
                             </div>
@@ -355,21 +377,13 @@ export default function TaskDetail() {
                                                 onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-active)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
                                                 onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
                                                 <div style={{ fontSize: '36px', marginBottom: '12px' }}>{isInvalidUrl ? '⚠️' : docIcon(d.file_name)}</div>
-
-                                                {/* File name — inline editable (CRM docs-க்கும் attachment-க்கும்) */}
                                                 {editingFileId === d.id ? (
                                                     <div style={{ marginBottom: '8px' }}>
-                                                        <input
-                                                            autoFocus
-                                                            value={fileNameVal}
-                                                            onChange={e => setFileNameVal(e.target.value)}
+                                                        <input autoFocus value={fileNameVal} onChange={e => setFileNameVal(e.target.value)}
                                                             onKeyDown={e => { if (e.key === 'Enter') handleSaveFileName(d.id); if (e.key === 'Escape') setEditingFileId(null); }}
-                                                            style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: '6px', padding: '4px 6px', color: 'var(--text-primary)', fontSize: '11px', width: '100%', outline: 'none', textAlign: 'center' }}
-                                                        />
+                                                            style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: '6px', padding: '4px 6px', color: 'var(--text-primary)', fontSize: '11px', width: '100%', outline: 'none', textAlign: 'center' }} />
                                                         <div style={{ display: 'flex', gap: '4px', marginTop: '6px', justifyContent: 'center' }}>
-                                                            <button className="btn-sm green" onClick={() => handleSaveFileName(d.id)} disabled={savingFileId === d.id} style={{ padding: '3px 8px', fontSize: '11px' }}>
-                                                                {savingFileId === d.id ? '⏳' : '✅'}
-                                                            </button>
+                                                            <button className="btn-sm green" onClick={() => handleSaveFileName(d.id)} disabled={savingFileId === d.id} style={{ padding: '3px 8px', fontSize: '11px' }}>{savingFileId === d.id ? '⏳' : '✅'}</button>
                                                             <button className="btn-sm" onClick={() => setEditingFileId(null)} style={{ padding: '3px 8px', fontSize: '11px' }}>✕</button>
                                                         </div>
                                                     </div>
@@ -377,21 +391,14 @@ export default function TaskDetail() {
                                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', marginBottom: '4px' }}>
                                                         <div style={{ fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '120px' }} title={d.file_name}>{d.file_name || 'document'}</div>
                                                         <button onClick={() => { setFileNameVal(d.file_name || ''); setEditingFileId(d.id); }}
-                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: 'var(--text-muted)', padding: '1px 2px', flexShrink: 0 }}
-                                                            title="Rename">✏️</button>
+                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: 'var(--text-muted)', padding: '1px 2px', flexShrink: 0 }} title="Rename">✏️</button>
                                                     </div>
                                                 )}
-
-                                                {/* CRM / Staff badge */}
                                                 <div style={{ fontSize: '10px', marginBottom: '12px', fontWeight: 600, color: isInvalidUrl ? '#ef4444' : isCrm ? '#fbbf24' : 'var(--text-muted)', textTransform: 'uppercase' }}>
                                                     {isInvalidUrl ? '❌ Invalid URL' : isCrm ? '🔗 CRM' : `${(d.file_name||'').split('.').pop()} file`}
                                                 </div>
-
-                                                <button
-                                                    className="btn-sm green"
-                                                    style={{ width: '100%', fontSize: '12px', ...(isInvalidUrl ? { background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' } : {}) }}
-                                                    onClick={() => openFile(d.file_url, d.file_name)}
-                                                >
+                                                <button className="btn-sm green" style={{ width: '100%', fontSize: '12px', ...(isInvalidUrl ? { background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' } : {}) }}
+                                                    onClick={() => openFile(d.file_url, d.file_name)}>
                                                     {isInvalidUrl ? '⚠️ Invalid' : '⬇️ Download'}
                                                 </button>
                                             </div>
@@ -401,7 +408,7 @@ export default function TaskDetail() {
                             }
                         </div>
 
-                        
+                        {/* Result Upload — CRM tasks only */}
                         {taskSource === 'crm' && (
                             <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #e879f9' }}>
                                 <h2 style={{ fontSize: '16px', marginBottom: '20px' }}>📤 Task Result</h2>
@@ -433,7 +440,6 @@ export default function TaskDetail() {
                             </div>
                         )}
 
-                        {/* Admin task completed */}
                         {taskSource === 'admin' && statusName === 'Completed' && (
                             <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #10b981' }}>
                                 <div style={{ textAlign: 'center', padding: '24px' }}>
@@ -445,7 +451,7 @@ export default function TaskDetail() {
                         )}
                     </div>
 
-                    {/* RIGHT */}
+                    {/* RIGHT SIDEBAR */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                         <div className="form-card" style={{ background: 'var(--bg-secondary)' }}>
                             <h3 style={{ fontSize: '14px', marginBottom: '20px', color: 'var(--text-secondary)' }}>⏰ Timeline</h3>
@@ -486,9 +492,9 @@ export default function TaskDetail() {
                             <h3 style={{ fontSize: '14px', marginBottom: '16px', color: 'var(--text-secondary)' }}>📊 Summary</h3>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                                 {[
-                                    { label: 'CRM Docs',    value: crmDocuments.length,    icon: '🔗', color: '#fbbf24' },
-                                    { label: 'Attachments', value: documents.length - crmDocuments.length, icon: '📁', color: '#a5b4fc' },
-                                    { label: 'Result Files', value: resultDocuments.length, icon: '📋', color: '#e879f9' },
+                                    { label: 'CRM Docs',     value: crmDocuments.length,                    icon: '🔗', color: '#fbbf24' },
+                                    { label: 'Attachments',  value: documents.length - crmDocuments.length, icon: '📁', color: '#a5b4fc' },
+                                    { label: 'Result Files', value: resultDocuments.length,                 icon: '📋', color: '#e879f9' },
                                 ].map((s, i) => (
                                     <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: '10px', border: '1px solid var(--border)' }}>
                                         <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{s.icon} {s.label}</span>

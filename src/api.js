@@ -15,7 +15,6 @@ export const getAuthHeaders = () => {
     return {};
 };
 
-// UUID format validate — "STF-01" போன்ற old format-ஐ reject பண்ணும்
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const getCurrentStaffId = () => {
@@ -23,14 +22,11 @@ const getCurrentStaffId = () => {
     if (!userRaw) return null;
     try {
         const user = JSON.parse(userRaw);
-        // UUID format மட்டும் return பண்ணு — STF-01, ADM-01 போன்றவை reject
         if (user.id && user.role === 'staff' && UUID_REGEX.test(user.id)) return user.id;
         return null;
     } catch { return null; }
 };
 
-// ── task_code & rework_code select-ல include பண்ணி இருக்கோம் ──────────────
-// இல்லன்னா task.task_code null ஆகும், UUID fallback ஆகும்
 const TASK_SELECT = `
     id, task_type, status, assigned_at, started_at, completed_at,
     notes, created_at, updated_at, priority, deadline, source, task_code,
@@ -52,11 +48,11 @@ const mapTaskRow = (t) => {
     const resultDoc = docs.find(d => d.doc_type === 'result');
     return {
         ...t,
-        task_code:       t.task_code              || null,  // JKT2026031807
+        task_code:       t.task_code              || null,
         client_name:     t.clients?.name          || null,
         client_phone:    t.clients?.phone         || null,
         client_email:    t.clients?.email         || null,
-        client_code:     t.clients?.client_code   || null,  // JKC2026031803
+        client_code:     t.clients?.client_code   || null,
         client_id_raw:   t.clients?.id            || null,
         staff_name:      t.staff?.name            || 'Unassigned',
         has_result:      !!resultDoc,
@@ -68,11 +64,11 @@ const mapTaskRow = (t) => {
 
 const mapReworkRow = (r) => ({
     ...r,
-    rework_code:   r.rework_code            || null,  // JKR2026031804
+    rework_code:   r.rework_code            || null,
     client_name:   r.clients?.name          || null,
     client_phone:  r.clients?.phone         || null,
     client_email:  r.clients?.email         || null,
-    client_code:   r.clients?.client_code   || null,  // JKC2026031803
+    client_code:   r.clients?.client_code   || null,
     client_id_raw: r.clients?.id            || null,
     staff_name:    r.staff?.name            || 'Unassigned',
     documents:     r.rework_documents       || [],
@@ -181,7 +177,6 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true };
         }
 
-        // ── ADMIN: Complete task (admin source மட்டும்) ───────────────────────
         if (path === '/admin/tasks/complete' && method === 'PATCH') {
             const { taskId } = body || {};
             if (!taskId) throw new Error('taskId required');
@@ -193,6 +188,21 @@ export const apiFetch = async (endpoint, options = {}) => {
             }
             const { error } = await supabase.from('tasks')
                 .update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', taskId);
+            if (error) throw error;
+            return { success: true };
+        }
+
+        // ── ADMIN: Task status change (any status) ────────────────────────────
+        if (path === '/admin/tasks/changestatus' && method === 'PATCH') {
+            const { taskId, status } = body || {};
+            if (!taskId || !status) throw new Error('taskId and status required');
+            const validStatuses = ['assigned', 'in_progress', 'completed'];
+            if (!validStatuses.includes(status)) throw new Error('Invalid status');
+            const updates = { status };
+            if (status === 'in_progress') updates.started_at = new Date().toISOString();
+            if (status === 'completed')   updates.completed_at = new Date().toISOString();
+            if (status === 'assigned')    { updates.started_at = null; updates.completed_at = null; }
+            const { error } = await supabase.from('tasks').update(updates).eq('id', taskId);
             if (error) throw error;
             return { success: true };
         }
@@ -221,6 +231,19 @@ export const apiFetch = async (endpoint, options = {}) => {
                 .eq('id', clientId);
             if (error) throw new Error('Client update failed: ' + error.message);
             return { success: true };
+        }
+
+        // ── CLIENT DOCUMENTS (CRM வழியா வந்த docs) ───────────────────────────
+        const clientDocsMatch = path.match(/^\/clients\/([^/]+)\/documents$/);
+        if (clientDocsMatch && method === 'GET') {
+            const clientId = clientDocsMatch[1];
+            const { data, error } = await supabase
+                .from('client_documents')
+                .select('id, file_url, file_name, file_type, doc_type, source, created_at')
+                .eq('client_id', clientId)
+                .order('created_at', { ascending: false });
+            if (error) throw error;
+            return { success: true, data: data || [] };
         }
 
         // ── DOCUMENT FILE NAME UPDATE ─────────────────────────────────────────
@@ -274,12 +297,10 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true, data };
         }
 
-        // ── REWORK CRM DOCUMENTS — same client + task_type documents table-லிருந்து ──
-        // CRM docs are in `documents` table with doc_type = task_type (GST_FILING etc)
+        // ── REWORK CRM DOCUMENTS ──────────────────────────────────────────────
         const reworkCrmDocsMatch = path.match(/^\/reworks\/([^/]+)\/crm-documents$/);
         if (reworkCrmDocsMatch && method === 'GET') {
             const reworkId = reworkCrmDocsMatch[1];
-            // Get rework details first
             const { data: rework, error: rErr } = await supabase
                 .from('reworks')
                 .select('client_id, task_type')
@@ -287,7 +308,6 @@ export const apiFetch = async (endpoint, options = {}) => {
                 .single();
             if (rErr || !rework) return { success: true, data: [] };
 
-            // Get all tasks for this client with same task_type
             const { data: tasks } = await supabase
                 .from('tasks')
                 .select('id')
@@ -298,7 +318,6 @@ export const apiFetch = async (endpoint, options = {}) => {
 
             const taskIds = tasks.map(t => t.id);
 
-            // Fetch CRM documents from those tasks (doc_type = task_type, not result/attachment)
             const { data: docs, error: dErr } = await supabase
                 .from('documents')
                 .select('id, file_url, file_name, file_type, doc_type, created_at, task_id')
@@ -379,6 +398,21 @@ export const apiFetch = async (endpoint, options = {}) => {
             const { reworkId } = body || {};
             const { error } = await supabase.from('reworks')
                 .update({ status: 'in_progress', started_at: new Date().toISOString() }).eq('id', reworkId);
+            if (error) throw error;
+            return { success: true };
+        }
+
+        // ── ADMIN: Rework status change ───────────────────────────────────────
+        if (path === '/admin/reworks/changestatus' && method === 'PATCH') {
+            const { reworkId, status } = body || {};
+            if (!reworkId || !status) throw new Error('reworkId and status required');
+            const validStatuses = ['assigned', 'in_progress', 'completed'];
+            if (!validStatuses.includes(status)) throw new Error('Invalid status');
+            const updates = { status };
+            if (status === 'in_progress') updates.started_at = new Date().toISOString();
+            if (status === 'completed')   updates.completed_at = new Date().toISOString();
+            if (status === 'assigned')    { updates.started_at = null; updates.completed_at = null; }
+            const { error } = await supabase.from('reworks').update(updates).eq('id', reworkId);
             if (error) throw error;
             return { success: true };
         }
@@ -530,8 +564,8 @@ export const mapBackendTaskToFrontend = (bTask) => {
         docs        = bTask.documents || [];
         docCount    = bTask.document_count ?? docs.length;
         source      = bTask.source || 'crm';
-        taskCode    = bTask.task_code || null;   // JKT2026031807
-        clientCode  = bTask.client_code || null; // JKC2026031803
+        taskCode    = bTask.task_code || null;
+        clientCode  = bTask.client_code || null;
         clientIdRaw = bTask.client_id_raw || null;
     }
 
@@ -561,8 +595,8 @@ export const mapBackendTaskToFrontend = (bTask) => {
         users:       staffName,
         status:      formatStatus(status),
         source,
-        task_code:   taskCode,    // JKT2026031807 — used as "Task ID" in UI & webhook
-        client_code: clientCode,  // JKC2026031803 — used as "Client ID" in UI & webhook
+        task_code:   taskCode,
+        client_code: clientCode,
         client_id:   clientIdRaw,
         docs,
         docCount,

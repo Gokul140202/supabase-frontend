@@ -3,10 +3,32 @@ import { apiFetch } from '../api';
 
 const AuthContext = createContext();
 
+// Today's date string — "2026-03-24"
+const getTodayDate = () => new Date().toISOString().split('T')[0];
+
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(() => {
-        const saved = localStorage.getItem('sp_auth_user');
-        return saved ? JSON.parse(saved) : null;
+        try {
+            const saved = localStorage.getItem('sp_auth_user');
+            if (!saved) return null;
+
+            const parsed = JSON.parse(saved);
+
+            // ── New day check ─────────────────────────────────────────────
+            const loginDate = localStorage.getItem('sp_login_date');
+            const today = getTodayDate();
+
+            if (!loginDate || loginDate !== today) {
+                // Different day — force logout
+                localStorage.removeItem('sp_auth_user');
+                localStorage.removeItem('sp_login_date');
+                return null;
+            }
+
+            return parsed;
+        } catch {
+            return null;
+        }
     });
 
     useEffect(() => {
@@ -14,12 +36,27 @@ export function AuthProvider({ children }) {
             localStorage.setItem('sp_auth_user', JSON.stringify(user));
         } else {
             localStorage.removeItem('sp_auth_user');
+            localStorage.removeItem('sp_login_date');
         }
+    }, [user]);
+
+    // ── Background: every 1 min date change check ─────────────────────────
+    useEffect(() => {
+        if (!user) return;
+
+        const interval = setInterval(() => {
+            const loginDate = localStorage.getItem('sp_login_date');
+            const today = getTodayDate();
+            if (!loginDate || loginDate !== today) {
+                setUser(null); // New day — auto logout
+            }
+        }, 60 * 1000);
+
+        return () => clearInterval(interval);
     }, [user]);
 
     const login = async (role, emailInput = '') => {
         try {
-            // 'auto' mode — email பார்த்து admin or staff decide பண்ணும்
             if (role === 'auto') {
                 const data = await apiFetch('/auth/login', {
                     method: 'POST',
@@ -33,12 +70,12 @@ export function AuthProvider({ children }) {
                         id:    data.user.id,
                         token: data.token,
                     });
+                    localStorage.setItem('sp_login_date', getTodayDate());
                     return true;
                 }
                 return false;
             }
 
-            // Legacy: direct role login (backward compat)
             if (role === 'admin') {
                 const data = await apiFetch('/auth/login', {
                     method: 'POST',
@@ -46,6 +83,7 @@ export function AuthProvider({ children }) {
                 });
                 if (data.success) {
                     setUser({ role: 'admin', name: data.user.name, email: data.user.email, id: data.user.id, token: data.token });
+                    localStorage.setItem('sp_login_date', getTodayDate());
                     return true;
                 }
             } else {
@@ -56,6 +94,7 @@ export function AuthProvider({ children }) {
                 });
                 if (data.success) {
                     setUser({ role: data.user.role, name: data.user.name, email: data.user.email, id: data.user.id, token: data.token });
+                    localStorage.setItem('sp_login_date', getTodayDate());
                     return true;
                 }
             }
