@@ -4,7 +4,7 @@ import Toast from '../components/Toast';
 import useToast from '../hooks/useToast';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { apiFetch, mapBackendTaskToFrontend } from '../api';
+import { apiFetch, mapBackendTaskToFrontend, supabase } from '../api';
 
 export default function Rework() {
     const { toast, showToast } = useToast();
@@ -17,6 +17,8 @@ export default function Rework() {
     const [showAssignModal, setShowAssignModal] = useState(false);
     const [backendStaff, setBackendStaff] = useState([]);
     const [newRework, setNewRework] = useState({ task: '', client: '', staffId: '', reason: '' });
+    const [reassigning, setReassigning] = useState(null);
+    const [statusChanging, setStatusChanging] = useState(null);
 
     const fetchReworks = async () => {
         setLoading(true);
@@ -92,6 +94,46 @@ export default function Rework() {
         }
     };
 
+    const handleReassignStaff = async (reworkId, newStaffId) => {
+        if (!newStaffId) return;
+        setReassigning(reworkId);
+        try {
+            const { error } = await supabase
+                .from('reworks')
+                .update({ assigned_staff: newStaffId, assigned_at: new Date().toISOString() })
+                .eq('id', reworkId);
+            if (error) throw new Error(error.message);
+            showToast('✅', 'Staff reassigned!');
+            await fetchReworks();
+        } catch (err) {
+            showToast('❌', 'Failed: ' + err.message);
+        } finally {
+            setReassigning(null);
+        }
+    };
+
+    const handleStatusChange = async (reworkId, newStatus) => {
+        if (!newStatus) return;
+        setStatusChanging(reworkId);
+        try {
+            const updates = { status: newStatus };
+            if (newStatus === 'in_progress') updates.started_at = new Date().toISOString();
+            if (newStatus === 'completed') updates.completed_at = new Date().toISOString();
+
+            const { error } = await supabase
+                .from('reworks')
+                .update(updates)
+                .eq('id', reworkId);
+            if (error) throw new Error(error.message);
+            showToast('✅', 'Status updated!');
+            await fetchReworks();
+        } catch (err) {
+            showToast('❌', 'Failed: ' + err.message);
+        } finally {
+            setStatusChanging(null);
+        }
+    };
+
     const filteredReworks = allReworks.filter(r => filterStatus === 'All' || r.status === filterStatus);
 
     const getDuration = (start, end) => {
@@ -103,6 +145,16 @@ export default function Rework() {
             if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h ${minutes}m`;
             return `${hours}h ${minutes}m`;
         } catch { return '—'; }
+    };
+
+    const getStatusDbValue = (displayStatus) => {
+        if (displayStatus === 'Completed') return 'completed';
+        if (displayStatus === 'In-Progress') return 'in_progress';
+        return 'assigned';
+    };
+
+    const getReworkStaffId = (rework) => {
+        return rework.raw?.staff?.id || rework.raw?.assigned_staff || null;
     };
 
     return (
@@ -163,14 +215,72 @@ export default function Rework() {
                                                 <div style={{ fontWeight: 600 }}>{r.task}</div>
                                                 <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{r.client}</div>
                                             </td>
-                                            <td><span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>{r.users}</span></td>
+                                            {/* ── STAFF: Admin = dropdown ── */}
+                                            <td>
+                                                {role === 'admin' ? (
+                                                    <select
+                                                        value={getReworkStaffId(r) || ''}
+                                                        onChange={(e) => handleReassignStaff(r.id, e.target.value)}
+                                                        disabled={reassigning === r.id}
+                                                        style={{
+                                                            background: 'rgba(99,102,241,0.1)',
+                                                            border: '1px solid rgba(99,102,241,0.3)',
+                                                            color: '#a5b4fc',
+                                                            padding: '4px 8px',
+                                                            borderRadius: '6px',
+                                                            fontSize: '11px',
+                                                            fontWeight: 600,
+                                                            cursor: reassigning === r.id ? 'not-allowed' : 'pointer',
+                                                            opacity: reassigning === r.id ? 0.5 : 1,
+                                                            maxWidth: '140px',
+                                                        }}
+                                                    >
+                                                        <option value="">-- Select --</option>
+                                                        {backendStaff.map(s => (
+                                                            <option key={s.id} value={s.id}>{s.name}</option>
+                                                        ))}
+                                                    </select>
+                                                ) : (
+                                                    <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>{r.users}</span>
+                                                )}
+                                            </td>
                                             <td style={{ fontSize: '12px', color: 'var(--accent)' }}>{r.openedAt !== '-' ? r.openedAt : '—'}</td>
                                             <td style={{ fontSize: '12px', color: '#34d399' }}>{r.completedAt !== '-' ? r.completedAt : '—'}</td>
                                             <td style={{ fontSize: '12px', color: '#e879f9', fontWeight: 600 }}>{getDuration(r.openedAt, r.completedAt)}</td>
+                                            {/* ── STATUS: Admin = dropdown ── */}
                                             <td>
-                                                <span className={`badge ${r.status === 'Completed' ? 'pan' : r.status === 'In-Progress' ? 'entity' : 'orange'}`}>
-                                                    {r.status}
-                                                </span>
+                                                {role === 'admin' ? (
+                                                    <select
+                                                        value={getStatusDbValue(r.status)}
+                                                        onChange={(e) => handleStatusChange(r.id, e.target.value)}
+                                                        disabled={statusChanging === r.id}
+                                                        style={{
+                                                            background: r.status === 'Completed' ? 'rgba(16,185,129,0.15)' :
+                                                                       r.status === 'In-Progress' ? 'rgba(99,102,241,0.15)' :
+                                                                       'rgba(245,158,11,0.15)',
+                                                            color: r.status === 'Completed' ? '#34d399' :
+                                                                   r.status === 'In-Progress' ? '#a5b4fc' :
+                                                                   '#fbbf24',
+                                                            border: '1px solid ' + (r.status === 'Completed' ? 'rgba(16,185,129,0.3)' :
+                                                                   r.status === 'In-Progress' ? 'rgba(99,102,241,0.3)' :
+                                                                   'rgba(245,158,11,0.3)'),
+                                                            padding: '4px 8px',
+                                                            borderRadius: '6px',
+                                                            fontSize: '11px',
+                                                            fontWeight: 700,
+                                                            cursor: statusChanging === r.id ? 'not-allowed' : 'pointer',
+                                                            opacity: statusChanging === r.id ? 0.5 : 1,
+                                                        }}
+                                                    >
+                                                        <option value="assigned">⏳ Pending</option>
+                                                        <option value="in_progress">🔄 In-Progress</option>
+                                                        <option value="completed">✅ Completed</option>
+                                                    </select>
+                                                ) : (
+                                                    <span className={`badge ${r.status === 'Completed' ? 'pan' : r.status === 'In-Progress' ? 'entity' : 'orange'}`}>
+                                                        {r.status}
+                                                    </span>
+                                                )}
                                             </td>
                                             <td>
                                                 <div style={{ display: 'flex', gap: '8px' }}>

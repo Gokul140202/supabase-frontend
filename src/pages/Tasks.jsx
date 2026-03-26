@@ -4,7 +4,7 @@ import Toast from '../components/Toast';
 import useToast from '../hooks/useToast';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { apiFetch, mapBackendTaskToFrontend } from '../api';
+import { apiFetch, mapBackendTaskToFrontend, supabase } from '../api';
 
 export default function Tasks() {
     const { toast, showToast } = useToast();
@@ -17,6 +17,9 @@ export default function Tasks() {
     const [showAssignModal, setShowAssignModal] = useState(false);
     const [backendStaff, setBackendStaff] = useState([]);
     const [newTask, setNewTask] = useState({ task: '', client: '', staffId: '' });
+    // Staff reassign states
+    const [reassigning, setReassigning] = useState(null); // task id being reassigned
+    const [statusChanging, setStatusChanging] = useState(null); // task id being status changed
 
     const fetchTasks = async () => {
         setLoading(true);
@@ -92,6 +95,48 @@ export default function Tasks() {
         }
     };
 
+    // ── Staff Reassign ──
+    const handleReassignStaff = async (taskId, newStaffId) => {
+        if (!newStaffId) return;
+        setReassigning(taskId);
+        try {
+            const { error } = await supabase
+                .from('tasks')
+                .update({ assigned_staff: newStaffId, assigned_at: new Date().toISOString() })
+                .eq('id', taskId);
+            if (error) throw new Error(error.message);
+            showToast('✅', 'Staff reassigned!');
+            await fetchTasks();
+        } catch (err) {
+            showToast('❌', 'Failed: ' + err.message);
+        } finally {
+            setReassigning(null);
+        }
+    };
+
+    // ── Status Change ──
+    const handleStatusChange = async (taskId, newStatus) => {
+        if (!newStatus) return;
+        setStatusChanging(taskId);
+        try {
+            const updates = { status: newStatus };
+            if (newStatus === 'in_progress') updates.started_at = new Date().toISOString();
+            if (newStatus === 'completed') updates.completed_at = new Date().toISOString();
+
+            const { error } = await supabase
+                .from('tasks')
+                .update(updates)
+                .eq('id', taskId);
+            if (error) throw new Error(error.message);
+            showToast('✅', 'Status updated!');
+            await fetchTasks();
+        } catch (err) {
+            showToast('❌', 'Failed: ' + err.message);
+        } finally {
+            setStatusChanging(null);
+        }
+    };
+
     const filteredTasks = allTasks.filter(t => filterStatus === 'All' || t.status === filterStatus);
 
     const getDuration = (start, end) => {
@@ -103,6 +148,17 @@ export default function Tasks() {
             if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h ${minutes}m`;
             return `${hours}h ${minutes}m`;
         } catch { return '—'; }
+    };
+
+    const getStatusDbValue = (displayStatus) => {
+        if (displayStatus === 'Completed') return 'completed';
+        if (displayStatus === 'In-Progress') return 'in_progress';
+        return 'assigned';
+    };
+
+    // Find current staff id from task raw data
+    const getTaskStaffId = (task) => {
+        return task.raw?.staff?.id || task.raw?.assigned_staff || null;
     };
 
     return (
@@ -163,14 +219,74 @@ export default function Tasks() {
                                                 <div style={{ fontWeight: 600 }}>{t.task}</div>
                                                 <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.client}</div>
                                             </td>
-                                            <td><span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>{t.users}</span></td>
+                                            {/* ── STAFF COLUMN: Admin = dropdown, Staff = static ── */}
+                                            <td>
+                                                {role === 'admin' ? (
+                                                    <select
+                                                        value={getTaskStaffId(t) || ''}
+                                                        onChange={(e) => handleReassignStaff(t.id, e.target.value)}
+                                                        disabled={reassigning === t.id}
+                                                        style={{
+                                                            background: 'rgba(99,102,241,0.1)',
+                                                            border: '1px solid rgba(99,102,241,0.3)',
+                                                            color: '#a5b4fc',
+                                                            padding: '4px 8px',
+                                                            borderRadius: '6px',
+                                                            fontSize: '11px',
+                                                            fontWeight: 600,
+                                                            cursor: reassigning === t.id ? 'not-allowed' : 'pointer',
+                                                            opacity: reassigning === t.id ? 0.5 : 1,
+                                                            maxWidth: '140px',
+                                                        }}
+                                                    >
+                                                        <option value="">-- Select --</option>
+                                                        {backendStaff.map(s => (
+                                                            <option key={s.id} value={s.id}>
+                                                                {s.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                ) : (
+                                                    <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>{t.users}</span>
+                                                )}
+                                            </td>
                                             <td style={{ fontSize: '12px', color: 'var(--accent)' }}>{t.openedAt !== '-' ? t.openedAt : '—'}</td>
                                             <td style={{ fontSize: '12px', color: '#34d399' }}>{t.completedAt !== '-' ? t.completedAt : '—'}</td>
                                             <td style={{ fontSize: '12px', color: '#e879f9', fontWeight: 600 }}>{getDuration(t.openedAt, t.completedAt)}</td>
+                                            {/* ── STATUS COLUMN: Admin = dropdown, Staff = static ── */}
                                             <td>
-                                                <span className={`badge ${t.status === 'Completed' ? 'pan' : t.status === 'In-Progress' ? 'entity' : 'orange'}`}>
-                                                    {t.status}
-                                                </span>
+                                                {role === 'admin' ? (
+                                                    <select
+                                                        value={getStatusDbValue(t.status)}
+                                                        onChange={(e) => handleStatusChange(t.id, e.target.value)}
+                                                        disabled={statusChanging === t.id}
+                                                        style={{
+                                                            background: t.status === 'Completed' ? 'rgba(16,185,129,0.15)' :
+                                                                       t.status === 'In-Progress' ? 'rgba(99,102,241,0.15)' :
+                                                                       'rgba(245,158,11,0.15)',
+                                                            color: t.status === 'Completed' ? '#34d399' :
+                                                                   t.status === 'In-Progress' ? '#a5b4fc' :
+                                                                   '#fbbf24',
+                                                            border: '1px solid ' + (t.status === 'Completed' ? 'rgba(16,185,129,0.3)' :
+                                                                   t.status === 'In-Progress' ? 'rgba(99,102,241,0.3)' :
+                                                                   'rgba(245,158,11,0.3)'),
+                                                            padding: '4px 8px',
+                                                            borderRadius: '6px',
+                                                            fontSize: '11px',
+                                                            fontWeight: 700,
+                                                            cursor: statusChanging === t.id ? 'not-allowed' : 'pointer',
+                                                            opacity: statusChanging === t.id ? 0.5 : 1,
+                                                        }}
+                                                    >
+                                                        <option value="assigned">⏳ Pending</option>
+                                                        <option value="in_progress">🔄 In-Progress</option>
+                                                        <option value="completed">✅ Completed</option>
+                                                    </select>
+                                                ) : (
+                                                    <span className={`badge ${t.status === 'Completed' ? 'pan' : t.status === 'In-Progress' ? 'entity' : 'orange'}`}>
+                                                        {t.status}
+                                                    </span>
+                                                )}
                                             </td>
                                             <td>
                                                 <div style={{ display: 'flex', gap: '8px' }}>
