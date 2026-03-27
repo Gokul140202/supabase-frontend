@@ -19,6 +19,11 @@ export default function Clients() {
     const [clientDocsLoading, setClientDocsLoading] = useState(false);
     const [activeTab, setActiveTab] = useState('crm_docs');
 
+    // ── Notes state ──────────────────────────────────────────────────────
+    const [notesVal, setNotesVal] = useState('');
+    const [editingNotes, setEditingNotes] = useState(false);
+    const [savingNotes, setSavingNotes] = useState(false);
+
     useEffect(() => {
         const fetchClients = async () => {
             setLoading(true);
@@ -52,6 +57,7 @@ export default function Clients() {
                                 clientCode: c.client_code || null,
                                 name: c.name,
                                 mobile: c.phone || 'N/A',
+                                notes: c.notes || '',
                                 taskTypes,
                                 taskCount: clientTasks.length,
                                 hasResult,
@@ -76,6 +82,7 @@ export default function Clients() {
                                         clientCode: task.client_code || null,
                                         name: task.client_name || 'Unknown',
                                         mobile: task.client_phone || 'N/A',
+                                        notes: '',
                                         taskTypes: [task.task_type],
                                         taskCount: 1,
                                         hasResult,
@@ -106,15 +113,27 @@ export default function Clients() {
         setActiveTab('crm_docs');
         setClientDocs([]);
         setResultDocs([]);
+        setEditingNotes(false);
+
+        // Fetch notes from supabase clients table
+        try {
+            const { data: clientData } = await supabase
+                .from('clients')
+                .select('notes')
+                .eq('id', client.id)
+                .maybeSingle();
+            setNotesVal(clientData?.notes || '');
+        } catch (e) {
+            setNotesVal(client.notes || '');
+        }
+
         setClientDocsLoading(true);
         try {
-            // 1. Fetch CRM documents from client_documents table
             const res = await apiFetch(`/clients/${client.id}/documents`);
             if (res.success) {
                 setClientDocs((res.data || []).filter(d => d.doc_type !== 'result'));
             }
 
-            // 2. Fetch result documents from documents table (task results)
             let allResults = [];
 
             const { data: taskIds } = await supabase
@@ -132,7 +151,6 @@ export default function Clients() {
                 if (taskResultDocs) allResults = [...allResults, ...taskResultDocs];
             }
 
-            // 3. Fetch result documents from rework_documents table (rework results)
             const { data: reworkIds } = await supabase
                 .from('reworks')
                 .select('id')
@@ -148,7 +166,6 @@ export default function Clients() {
                 if (reworkResultDocs) allResults = [...allResults, ...reworkResultDocs];
             }
 
-            // Sort all results by date (newest first)
             allResults.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             setResultDocs(allResults);
 
@@ -156,6 +173,27 @@ export default function Clients() {
             console.error('client documents fetch error:', err);
         } finally {
             setClientDocsLoading(false);
+        }
+    };
+
+    // ── Save notes to supabase ────────────────────────────────────────────
+    const handleSaveNotes = async () => {
+        if (savingNotes) return;
+        setSavingNotes(true);
+        try {
+            const { error } = await supabase
+                .from('clients')
+                .update({ notes: notesVal.trim(), updated_at: new Date().toISOString() })
+                .eq('id', selectedClient.id);
+            if (error) throw new Error(error.message);
+            setEditingNotes(false);
+            showToast('✅', 'Notes saved!');
+            // Update local state
+            setSelectedClient(prev => ({ ...prev, notes: notesVal.trim() }));
+        } catch (err) {
+            showToast('❌', 'Failed to save: ' + err.message);
+        } finally {
+            setSavingNotes(false);
         }
     };
 
@@ -341,6 +379,23 @@ export default function Clients() {
                                     </span>
                                 )}
                             </button>
+                            {/* ── NOTES TAB ── */}
+                            <button
+                                onClick={() => { setActiveTab('notes'); setEditingNotes(false); }}
+                                style={{
+                                    padding: '8px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, border: 'none', cursor: 'pointer',
+                                    background: activeTab === 'notes' ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.04)',
+                                    color: activeTab === 'notes' ? '#fbbf24' : '#94a3b8',
+                                    display: 'flex', alignItems: 'center', gap: '6px'
+                                }}
+                            >
+                                📝 Notes
+                                {notesVal && notesVal.trim().length > 0 && (
+                                    <span style={{ background: 'rgba(245,158,11,0.3)', color: '#fbbf24', padding: '1px 6px', borderRadius: '4px', fontSize: '11px' }}>
+                                        ✓
+                                    </span>
+                                )}
+                            </button>
                         </div>
 
                         {/* ── TAB: CRM Documents ── */}
@@ -442,6 +497,77 @@ export default function Clients() {
                                                 </a>
                                             </div>
                                         ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* ── TAB: Notes ── */}
+                        {activeTab === 'notes' && (
+                            <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                                    <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Client Notes</span>
+                                    {!editingNotes && (
+                                        <button
+                                            onClick={() => setEditingNotes(true)}
+                                            style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '5px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                        >
+                                            ✏️ {notesVal.trim() ? 'Edit' : 'Add Notes'}
+                                        </button>
+                                    )}
+                                </div>
+
+                                {editingNotes ? (
+                                    <div>
+                                        <textarea
+                                            autoFocus
+                                            value={notesVal}
+                                            onChange={e => setNotesVal(e.target.value)}
+                                            placeholder="Add notes about this client — important details, reminders, special instructions..."
+                                            style={{
+                                                width: '100%', minHeight: '160px', background: 'rgba(255,255,255,0.04)',
+                                                border: '1px solid rgba(245,158,11,0.4)', borderRadius: '12px',
+                                                padding: '14px 16px', color: 'var(--text-primary)', fontSize: '14px',
+                                                fontFamily: 'Inter, sans-serif', resize: 'vertical', outline: 'none',
+                                                lineHeight: '1.6', boxSizing: 'border-box',
+                                            }}
+                                            onFocus={e => e.target.style.borderColor = 'rgba(245,158,11,0.7)'}
+                                            onBlur={e => e.target.style.borderColor = 'rgba(245,158,11,0.4)'}
+                                        />
+                                        <div style={{ display: 'flex', gap: '8px', marginTop: '10px', justifyContent: 'flex-end' }}>
+                                            <button
+                                                onClick={() => { setEditingNotes(false); }}
+                                                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '7px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button
+                                                onClick={handleSaveNotes}
+                                                disabled={savingNotes}
+                                                style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '7px 20px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: savingNotes ? 'not-allowed' : 'pointer', opacity: savingNotes ? 0.6 : 1 }}
+                                            >
+                                                {savingNotes ? '⏳ Saving...' : '✅ Save Notes'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        {notesVal.trim() ? (
+                                            <div style={{
+                                                background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)',
+                                                borderRadius: '12px', padding: '16px 18px',
+                                                fontSize: '14px', color: 'var(--text-primary)',
+                                                lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                            }}>
+                                                {notesVal}
+                                            </div>
+                                        ) : (
+                                            <div style={{ textAlign: 'center', padding: '40px', color: '#64748b', border: '1px dashed rgba(245,158,11,0.25)', borderRadius: '14px' }}>
+                                                <div style={{ fontSize: '36px', marginBottom: '12px' }}>📝</div>
+                                                <div style={{ fontSize: '14px', fontWeight: 600 }}>No notes yet</div>
+                                                <div style={{ fontSize: '12px', marginTop: '6px', color: '#475569' }}>Click "Add Notes" to write something</div>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </div>

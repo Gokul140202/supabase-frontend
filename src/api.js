@@ -169,8 +169,13 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true, data: mapTaskRow(data) };
         }
 
+        // ── FIX: Only update started_at if NOT already started/completed ─────
         if (path === '/staff/tasks/start' && method === 'PATCH') {
             const { taskId } = body || {};
+            const { data: existing } = await supabase.from('tasks').select('status').eq('id', taskId).maybeSingle();
+            if (existing && (existing.status === 'in_progress' || existing.status === 'completed')) {
+                return { success: true, message: 'Already started' };
+            }
             const { error } = await supabase.from('tasks')
                 .update({ status: 'in_progress', started_at: new Date().toISOString() }).eq('id', taskId);
             if (error) throw error;
@@ -394,8 +399,13 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true, data: rework };
         }
 
+        // ── FIX: Only update started_at if NOT already started/completed ─────
         if (path === '/reworks/start' && method === 'PATCH') {
             const { reworkId } = body || {};
+            const { data: existing } = await supabase.from('reworks').select('status').eq('id', reworkId).maybeSingle();
+            if (existing && (existing.status === 'in_progress' || existing.status === 'completed')) {
+                return { success: true, message: 'Already started' };
+            }
             const { error } = await supabase.from('reworks')
                 .update({ status: 'in_progress', started_at: new Date().toISOString() }).eq('id', reworkId);
             if (error) throw error;

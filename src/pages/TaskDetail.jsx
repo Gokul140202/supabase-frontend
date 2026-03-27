@@ -3,8 +3,36 @@ import Sidebar from '../components/Sidebar';
 import useToast from '../hooks/useToast';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiFetch, uploadDocument, supabase } from '../api';
+
+// ─── Webhook URLs ──────────────────────────────────────────────────────────
+const WEBHOOK_IN_PROGRESS = 'https://services.leadconnectorhq.com/hooks/GmLfYZp3rjJ0jWt1nZtb/webhook-trigger/8d35401e-f610-49fe-ab54-780883429d16';
+const WEBHOOK_RESULT       = 'https://services.leadconnectorhq.com/hooks/GmLfYZp3rjJ0jWt1nZtb/webhook-trigger/c8acafca-2d52-4f75-a8b9-31b783957fdb';
+
+async function fireInProgressWebhook(task, triggeredBy = 'staff') {
+    try {
+        const taskUUID = task.id || '';
+        const res = await fetch(WEBHOOK_IN_PROGRESS, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                event:         'task_status_changed_to_in_progress',
+                triggered_by:  triggeredBy,
+                task_id:       task.task_code || taskUUID,
+                client_id:     task.client_code || task.client_id || '',
+                client_name:   task.client_name || '',
+                task_type:     task.task_type || '',
+                staff_name:    task.staff_name || '',
+                mobile_number: task.client_phone || '',
+                changed_at:    new Date().toISOString(),
+            }),
+        });
+        console.log(`✅ in_progress webhook sent (${triggeredBy}), status:`, res.status);
+    } catch (e) {
+        console.warn('⚠️ in_progress webhook failed:', e.message);
+    }
+}
 
 export default function TaskDetail() {
     const { id } = useParams();
@@ -25,6 +53,14 @@ export default function TaskDetail() {
     const [editingFileId, setEditingFileId] = useState(null);
     const [fileNameVal, setFileNameVal] = useState('');
     const [savingFileId, setSavingFileId] = useState(null);
+
+    // ── Client Notes state ─────────────────────────────────────────────────
+    const [clientNotes, setClientNotes] = useState('');
+    const [editingNotes, setEditingNotes] = useState(false);
+    const [notesVal, setNotesVal] = useState('');
+    const [savingNotes, setSavingNotes] = useState(false);
+
+    const staffOpenedRef = useRef(false);
 
     const handleAdminStatusChange = async (newStatus) => {
         if (completing) return;
@@ -48,6 +84,16 @@ export default function TaskDetail() {
         finally { setClientDocsLoading(false); }
     };
 
+    const fetchClientNotes = async (clientId) => {
+        if (!clientId) return;
+        try {
+            const { data } = await supabase.from('clients').select('notes').eq('id', clientId).maybeSingle();
+            const n = data?.notes || '';
+            setClientNotes(n);
+            setNotesVal(n);
+        } catch (e) { console.error('notes fetch:', e); }
+    };
+
     const fetchTaskDetails = async () => {
         setLoading(true);
         try {
@@ -56,7 +102,10 @@ export default function TaskDetail() {
             if (data.success && data.data) {
                 setTask(data.data);
                 const clientId = data.data.clients?.id || data.data.client_id_raw || data.data.client_id;
-                if (clientId) fetchClientDocs(clientId);
+                if (clientId) {
+                    fetchClientDocs(clientId);
+                    fetchClientNotes(clientId);
+                }
                 if (role !== 'admin') localStorage.setItem(`task_opened_${id}`, new Date().toLocaleString());
             }
         } catch (err) { showToast('❌', 'Failed to load task details'); }
@@ -85,7 +134,44 @@ export default function TaskDetail() {
         finally { setSavingFileId(null); }
     };
 
+    const handleSaveNotes = async () => {
+        if (savingNotes) return;
+        setSavingNotes(true);
+        try {
+            const clientId = task?.clients?.id || task?.client_id_raw || task?.client_id;
+            if (!clientId) throw new Error('Client ID not found');
+            const { error } = await supabase.from('clients')
+                .update({ notes: notesVal.trim(), updated_at: new Date().toISOString() })
+                .eq('id', clientId);
+            if (error) throw new Error(error.message);
+            setClientNotes(notesVal.trim());
+            setEditingNotes(false);
+            showToast('✅', 'Notes saved!');
+        } catch (err) { showToast('❌', 'Failed: ' + err.message); }
+        finally { setSavingNotes(false); }
+    };
+
     useEffect(() => { fetchTaskDetails(); }, [id, role]);
+
+    // ── Staff first open → in_progress + webhook ──────────────────────────
+    useEffect(() => {
+        if (!task || role === 'admin' || staffOpenedRef.current) return;
+        const currentStatus = (task.status || '').toLowerCase();
+        if (currentStatus === 'in_progress' || currentStatus === 'completed') return;
+        staffOpenedRef.current = true;
+        const taskUUID = task.id || id;
+        (async () => {
+            try {
+                const { error } = await supabase.from('tasks').update({
+                    status: 'in_progress', started_at: new Date().toISOString(),
+                }).eq('id', taskUUID);
+                if (error) console.warn('started_at update error:', error.message);
+                else console.log('✅ Task marked in_progress:', taskUUID);
+            } catch (e) { console.warn('started_at update failed:', e.message); }
+            await fireInProgressWebhook(task, 'staff');
+            await fetchTaskDetails();
+        })();
+    }, [task]);
 
     if (loading) return (<div className="app-layout"><Sidebar /><div className="main-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}><div style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>⏳ Loading Task Details...</div></div></div>);
     if (!task) return (<div className="app-layout"><Sidebar /><div className="main-content"><div style={{ padding: '40px', textAlign: 'center' }}><h2>Task not found</h2><button className="btn-primary" style={{ margin: '20px auto' }} onClick={() => navigate('/tasks')}>Back to Tasks</button></div></div></div>);
@@ -106,7 +192,6 @@ export default function TaskDetail() {
     const docIcon = (name) => ({ pdf:'📕',doc:'📘',docx:'📘',xls:'📗',xlsx:'📗',jpg:'🖼️',jpeg:'🖼️',png:'🖼️',zip:'📦',tax:'💸' })[(name||'').split('.').pop().toLowerCase()] || '📄';
     const openFile = (url, name) => { if (!url || url === '[]' || url === '' || url === 'null' || url.startsWith('[')) { showToast('❌', `"${name}" — file URL invalid.`); return; } const a = document.createElement('a'); a.href = url; a.download = name || 'document'; a.target = '_blank'; a.rel = 'noreferrer'; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
 
-    // Upload → client_documents (same table as CRM docs)
     const handleUploadDocument = async (e) => {
         const file = e.target.files?.[0];
         if (!file || !validateFile(file)) { e.target.value = ''; setDocInputKey(Date.now()); return; }
@@ -146,7 +231,19 @@ export default function TaskDetail() {
             const taskUUID = task?.id || id;
             const result = await uploadDocument(file, taskUUID, 'result');
             showToast('✅', 'Result uploaded!'); await fetchTaskDetails();
-            try { await fetch('https://services.leadconnectorhq.com/hooks/GmLfYZp3rjJ0jWt1nZtb/webhook-trigger/c8acafca-2d52-4f75-a8b9-31b783957fdb', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'result_uploaded', task_id: task.task_code || taskUUID, client_id: task.client_code || task.client_id, task_type: task.task_type || 'N/A', client_name: task.client_name || 'N/A', mobile_number: task.client_phone || 'N/A', document: { file_name: file.name, file_size: `${(file.size/(1024*1024)).toFixed(2)} MB`, file_type: file.type || file.name.split('.').pop(), doc_type: 'result', url: result.file_url }, uploaded_at: new Date().toISOString() }) }); } catch (wErr) { console.warn('⚠️ CRM webhook failed:', wErr.message); }
+            try {
+                await fetch(WEBHOOK_RESULT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event: 'result_uploaded', task_id: task.task_code || taskUUID,
+                        client_id: task.client_code || task.client_id, task_type: task.task_type || 'N/A',
+                        client_name: task.client_name || 'N/A', mobile_number: task.client_phone || 'N/A',
+                        document: { file_name: file.name, file_size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`, file_type: file.type || file.name.split('.').pop(), doc_type: 'result', url: result.file_url },
+                        uploaded_at: new Date().toISOString(),
+                    }),
+                });
+            } catch (wErr) { console.warn('⚠️ result webhook failed:', wErr.message); }
         } catch (err) { showToast('❌', 'Upload failed: ' + err.message); }
         finally { setUploading(false); e.target.value = ''; }
     };
@@ -228,14 +325,67 @@ export default function TaskDetail() {
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Phone</span>
                                     <span style={{ fontSize: '14px', fontWeight: 600, color: '#e879f9' }}>{task.client_phone || 'N/A'}</span>
                                 </div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Email</span>
                                     <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{task.client_email || 'No Email Provided'}</span>
                                 </div>
+
+                                {/* ── CLIENT NOTES ─────────────────────────────────────── */}
+                                <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                        <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>📝 Notes</span>
+                                        {!editingNotes && (
+                                            <button
+                                                onClick={() => { setNotesVal(clientNotes); setEditingNotes(true); }}
+                                                style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '3px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+                                            >
+                                                ✏️ {clientNotes.trim() ? 'Edit' : 'Add'}
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {editingNotes ? (
+                                        <div>
+                                            <textarea
+                                                autoFocus
+                                                value={notesVal}
+                                                onChange={e => setNotesVal(e.target.value)}
+                                                placeholder="Add notes about this client..."
+                                                style={{
+                                                    width: '100%', minHeight: '100px',
+                                                    background: 'rgba(255,255,255,0.04)',
+                                                    border: '1px solid rgba(245,158,11,0.4)',
+                                                    borderRadius: '10px', padding: '10px 14px',
+                                                    color: 'var(--text-primary)', fontSize: '13px',
+                                                    fontFamily: 'Inter, sans-serif', resize: 'vertical',
+                                                    outline: 'none', lineHeight: '1.6', boxSizing: 'border-box',
+                                                }}
+                                            />
+                                            <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'flex-end' }}>
+                                                <button onClick={() => setEditingNotes(false)} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '5px 12px', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                                                <button onClick={handleSaveNotes} disabled={savingNotes} style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '5px 14px', borderRadius: '7px', fontSize: '12px', fontWeight: 700, cursor: savingNotes ? 'not-allowed' : 'pointer', opacity: savingNotes ? 0.6 : 1 }}>
+                                                    {savingNotes ? '⏳...' : '✅ Save'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div style={{
+                                            background: clientNotes.trim() ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.02)',
+                                            border: `1px solid ${clientNotes.trim() ? 'rgba(245,158,11,0.2)' : 'var(--border)'}`,
+                                            borderRadius: '10px', padding: '10px 14px',
+                                            fontSize: '13px', color: clientNotes.trim() ? 'var(--text-primary)' : 'var(--text-muted)',
+                                            lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                            fontStyle: clientNotes.trim() ? 'normal' : 'italic',
+                                        }}>
+                                            {clientNotes.trim() || 'No notes added yet'}
+                                        </div>
+                                    )}
+                                </div>
+                                {/* ─────────────────────────────────────────────────────── */}
                             </div>
                         </div>
 
-                        {/* ══════ ATTACHED DOCUMENTS — single merged section ══════ */}
+                        {/* Attached Documents */}
                         <div className="form-card" style={{ background: 'var(--bg-secondary)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                                 <h2 style={{ fontSize: '16px', margin: 0 }}>
@@ -267,7 +417,20 @@ export default function TaskDetail() {
                                                 onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-active)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
                                                 onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
                                                 <div style={{ fontSize: '30px', marginBottom: '10px' }}>{isInvalid ? '⚠️' : docIcon(d.file_name)}</div>
-                                                <div style={{ fontSize: '11px', fontWeight: 600, marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.file_name}>{d.file_name || 'document'}</div>
+                                                {editingFileId === d.id ? (
+                                                    <div style={{ marginBottom: '8px' }}>
+                                                        <input autoFocus value={fileNameVal} onChange={e => setFileNameVal(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSaveFileName(d.id); if (e.key === 'Escape') setEditingFileId(null); }} style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: '6px', padding: '4px 6px', color: 'var(--text-primary)', fontSize: '11px', width: '100%', outline: 'none', textAlign: 'center' }} />
+                                                        <div style={{ display: 'flex', gap: '4px', marginTop: '6px', justifyContent: 'center' }}>
+                                                            <button className="btn-sm green" onClick={() => handleSaveFileName(d.id)} disabled={savingFileId === d.id} style={{ padding: '3px 8px', fontSize: '11px' }}>{savingFileId === d.id ? '⏳' : '✅'}</button>
+                                                            <button className="btn-sm" onClick={() => setEditingFileId(null)} style={{ padding: '3px 8px', fontSize: '11px' }}>✕</button>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', marginBottom: '4px' }}>
+                                                        <div style={{ fontSize: '11px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '110px' }} title={d.file_name}>{d.file_name || 'document'}</div>
+                                                        <button onClick={() => { setFileNameVal(d.file_name || ''); setEditingFileId(d.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: 'var(--text-muted)', padding: '1px 2px', flexShrink: 0 }} title="Rename">✏️</button>
+                                                    </div>
+                                                )}
                                                 <div style={{ fontSize: '10px', marginBottom: '4px', fontWeight: 600, color: isInvalid ? '#ef4444' : isManual ? '#a5b4fc' : '#fbbf24' }}>
                                                     {isInvalid ? '❌ Invalid' : isManual ? '📤 Manual' : '🔗 CRM'}
                                                 </div>
@@ -284,7 +447,7 @@ export default function TaskDetail() {
                             )}
                         </div>
 
-                        {/* ══════ RESULT FILE ══════ */}
+                        {/* Result File */}
                         {taskSource === 'crm' && (
                             <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #e879f9' }}>
                                 <h2 style={{ fontSize: '16px', marginBottom: '20px' }}>📤 Task Result</h2>
@@ -314,16 +477,16 @@ export default function TaskDetail() {
                         )}
                     </div>
 
-                    {/* RIGHT SIDEBAR */}
+                    {/* Right Sidebar */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                         <div className="form-card" style={{ background: 'var(--bg-secondary)' }}>
                             <h3 style={{ fontSize: '14px', marginBottom: '20px', color: 'var(--text-secondary)' }}>⏰ Timeline</h3>
                             <div style={{ position: 'relative', paddingLeft: '28px' }}>
                                 <div style={{ position: 'absolute', left: '7px', top: '8px', bottom: '8px', width: '2px', background: 'linear-gradient(to bottom, #f59e0b, #6366f1, #10b981)', borderRadius: '2px', opacity: 0.3 }} />
                                 {[...(role !== 'admin' ? [{ label: 'OPENED BY YOU', time: localStorage.getItem(`task_opened_${id}`) || '—', color: '#8b5cf6', active: true }] : []),
-                                    { label: 'CREATED', time: formatDate(task.created_at), color: '#f59e0b', active: true },
-                                    { label: 'ASSIGNED', time: formatDate(task.assigned_at), color: '#3b82f6', active: !!task.assigned_at },
-                                    { label: 'STARTED', time: formatDate(task.started_at), color: '#6366f1', active: !!task.started_at },
+                                    { label: 'CREATED',   time: formatDate(task.created_at),   color: '#f59e0b', active: true },
+                                    { label: 'ASSIGNED',  time: formatDate(task.assigned_at),  color: '#3b82f6', active: !!task.assigned_at },
+                                    { label: 'STARTED',   time: formatDate(task.started_at),   color: '#6366f1', active: !!task.started_at },
                                     { label: 'COMPLETED', time: formatDate(task.completed_at), color: '#10b981', active: statusName === 'Completed' },
                                     ...(statusName === 'Completed' && task.started_at && task.completed_at ? [{ label: 'DURATION', time: calcDuration(task.started_at, task.completed_at), color: '#e879f9', active: true }] : []),
                                 ].map((step, i) => (
