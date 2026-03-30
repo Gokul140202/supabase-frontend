@@ -3,64 +3,145 @@ import Sidebar from '../components/Sidebar';
 import useToast from '../hooks/useToast';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch, uploadDocument, supabase } from '../api';
 
-// ─── Webhook URLs ──────────────────────────────────────────────────────────
 const WEBHOOK_IN_PROGRESS = 'https://services.leadconnectorhq.com/hooks/GmLfYZp3rjJ0jWt1nZtb/webhook-trigger/8d35401e-f610-49fe-ab54-780883429d16';
 const WEBHOOK_RESULT       = 'https://services.leadconnectorhq.com/hooks/GmLfYZp3rjJ0jWt1nZtb/webhook-trigger/c8acafca-2d52-4f75-a8b9-31b783957fdb';
-
-async function fireInProgressWebhook(task, triggeredBy = 'staff') {
-    try {
-        const taskUUID = task.id || '';
-        const res = await fetch(WEBHOOK_IN_PROGRESS, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                event:         'task_status_changed_to_in_progress',
-                triggered_by:  triggeredBy,
-                task_id:       task.task_code || taskUUID,
-                client_id:     task.client_code || task.client_id || '',
-                client_name:   task.client_name || '',
-                task_type:     task.task_type || '',
-                staff_name:    task.staff_name || '',
-                mobile_number: task.client_phone || '',
-                changed_at:    new Date().toISOString(),
-            }),
-        });
-        console.log(`✅ in_progress webhook sent (${triggeredBy}), status:`, res.status);
-    } catch (e) {
-        console.warn('⚠️ in_progress webhook failed:', e.message);
-    }
-}
 
 export default function TaskDetail() {
     const { id } = useParams();
     const navigate = useNavigate();
     const { role } = useAuth();
     const { toast, showToast } = useToast();
-    const [task, setTask] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [uploading, setUploading] = useState(false);
-    const [uploadingDoc, setUploadingDoc] = useState(false);
-    const [completing, setCompleting] = useState(false);
-    const [docInputKey, setDocInputKey] = useState(Date.now());
-    const [clientDocs, setClientDocs] = useState([]);
+
+    const [task, setTask]                           = useState(null);
+    const [loading, setLoading]                     = useState(true);
+    const [uploading, setUploading]                 = useState(false);
+    const [uploadingDoc, setUploadingDoc]           = useState(false);
+    const [completing, setCompleting]               = useState(false);
+    const [docInputKey, setDocInputKey]             = useState(Date.now());
+    const [clientDocs, setClientDocs]               = useState([]);
     const [clientDocsLoading, setClientDocsLoading] = useState(false);
     const [editingClientName, setEditingClientName] = useState(false);
-    const [clientNameVal, setClientNameVal] = useState('');
-    const [savingClientName, setSavingClientName] = useState(false);
-    const [editingFileId, setEditingFileId] = useState(null);
-    const [fileNameVal, setFileNameVal] = useState('');
-    const [savingFileId, setSavingFileId] = useState(null);
+    const [clientNameVal, setClientNameVal]         = useState('');
+    const [savingClientName, setSavingClientName]   = useState(false);
+    const [editingFileId, setEditingFileId]         = useState(null);
+    const [fileNameVal, setFileNameVal]             = useState('');
+    const [savingFileId, setSavingFileId]           = useState(null);
+    const [clientNotes, setClientNotes]             = useState('');
+    const [editingNotes, setEditingNotes]           = useState(false);
+    const [notesVal, setNotesVal]                   = useState('');
+    const [savingNotes, setSavingNotes]             = useState(false);
 
-    // ── Client Notes state ─────────────────────────────────────────────────
-    const [clientNotes, setClientNotes] = useState('');
-    const [editingNotes, setEditingNotes] = useState(false);
-    const [notesVal, setNotesVal] = useState('');
-    const [savingNotes, setSavingNotes] = useState(false);
+    // ── KEY: This ref prevents duplicate in_progress trigger ──────────────
+    const inProgressDone = useRef(false);
 
-    const staffOpenedRef = useRef(false);
+    const formatStatus = (s) => {
+        if (!s) return 'Pending';
+        const l = s.toLowerCase();
+        if (l === 'completed') return 'Completed';
+        if (l === 'in_progress' || l === 'in-progress') return 'In-Progress';
+        return 'Pending';
+    };
+    const formatDate = (d) => { if (!d) return '—'; try { return new Date(d).toLocaleString(); } catch { return d; } };
+    const calcDuration = (s, e) => {
+        if (!s || !e) return '—';
+        try {
+            const diff = Math.abs(new Date(e) - new Date(s));
+            const h = Math.floor(diff / 3600000), m = Math.floor((diff % 3600000) / 60000);
+            return h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h ${m}m` : `${h}h ${m}m`;
+        } catch { return '—'; }
+    };
+    const allowedExt    = ['.pdf','.doc','.docx','.xls','.xlsx','.jpg','.jpeg','.png','.gif','.bmp','.tiff','.tif','.txt','.csv','.zip','.rar','.tax'];
+    const acceptFormats = allowedExt.join(',');
+    const validateFile  = (file) => {
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        if (!allowedExt.includes(ext)) { showToast('❌', `Invalid format (${ext})`); return false; }
+        return true;
+    };
+    const docIcon  = (name) => ({ pdf:'📕',doc:'📘',docx:'📘',xls:'📗',xlsx:'📗',jpg:'🖼️',jpeg:'🖼️',png:'🖼️',zip:'📦',tax:'💸' })[(name||'').split('.').pop().toLowerCase()] || '📄';
+    const openFile = (url, name) => {
+        if (!url || url === '[]' || url === 'null' || url.startsWith('[')) { showToast('❌', `"${name}" — file URL invalid.`); return; }
+        const a = document.createElement('a'); a.href = url; a.download = name || 'document'; a.target = '_blank'; a.rel = 'noreferrer';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    };
+
+    const fetchClientDocs = async (clientId) => {
+        if (!clientId) return;
+        setClientDocsLoading(true);
+        try {
+            const { data, error } = await supabase.from('client_documents').select('*').eq('client_id', clientId).order('created_at', { ascending: false });
+            if (!error && data) setClientDocs(data);
+        } finally { setClientDocsLoading(false); }
+    };
+
+    const fetchClientNotes = async (clientId) => {
+        if (!clientId) return;
+        try {
+            const { data } = await supabase.from('clients').select('notes').eq('id', clientId).maybeSingle();
+            const n = data?.notes || ''; setClientNotes(n); setNotesVal(n);
+        } catch {}
+    };
+
+    const fetchTaskDetails = useCallback(async () => {
+        setLoading(true);
+        try {
+            const endpoint = role === 'admin' ? `/admin/tasks/${id}` : `/staff/tasks/${id}`;
+            const data = await apiFetch(endpoint);
+            if (data.success && data.data) {
+                setTask(data.data);
+                const clientId = data.data.clients?.id || data.data.client_id_raw || data.data.client_id;
+                if (clientId) { fetchClientDocs(clientId); fetchClientNotes(clientId); }
+                if (role !== 'admin') localStorage.setItem(`task_opened_${id}`, new Date().toLocaleString());
+            }
+        } catch { showToast('❌', 'Failed to load task details'); }
+        finally { setLoading(false); }
+    }, [id, role]);
+
+    useEffect(() => { fetchTaskDetails(); }, [fetchTaskDetails]);
+
+    // ── STAFF: task open → in_progress + webhook (ONCE) ──────────────────
+    useEffect(() => {
+        if (!task || role === 'admin') return;
+        if (inProgressDone.current) return; // session-level lock
+        if (task.inprogress_webhook_sent === true) return; // already sent before
+        if (task.status === 'completed') return; // completed tasks skip
+
+        inProgressDone.current = true; // lock immediately
+
+        (async () => {
+            try {
+                // Update status → in_progress + mark webhook sent
+                await supabase.from('tasks').update({
+                    status: 'in_progress',
+                    started_at: task.started_at || new Date().toISOString(),
+                    inprogress_webhook_sent: true,
+                }).eq('id', task.id);
+
+                // Fire webhook
+                await fetch(WEBHOOK_IN_PROGRESS, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event:         'task_status_changed_to_in_progress',
+                        triggered_by:  'staff',
+                        task_id:       task.task_code || task.id,
+                        client_id:     task.client_code || task.client_id || '',
+                        client_name:   task.client_name || '',
+                        task_type:     task.task_type || '',
+                        staff_name:    task.staff_name || '',
+                        mobile_number: task.client_phone || '',
+                        changed_at:    new Date().toISOString(),
+                    }),
+                });
+                console.log('✅ in_progress webhook sent');
+                await fetchTaskDetails();
+            } catch (e) {
+                console.warn('in_progress webhook error:', e.message);
+            }
+        })();
+    }, [task?.id]);
 
     const handleAdminStatusChange = async (newStatus) => {
         if (completing) return;
@@ -72,44 +153,6 @@ export default function TaskDetail() {
             else showToast('❌', res.error || 'Failed', true);
         } catch (err) { showToast('❌', 'Failed: ' + err.message, true); }
         finally { setCompleting(false); }
-    };
-
-    const fetchClientDocs = async (clientId) => {
-        if (!clientId) return;
-        setClientDocsLoading(true);
-        try {
-            const { data, error } = await supabase.from('client_documents').select('*').eq('client_id', clientId).order('created_at', { ascending: false });
-            if (!error && data) setClientDocs(data);
-        } catch (err) { console.error('client_documents fetch:', err); }
-        finally { setClientDocsLoading(false); }
-    };
-
-    const fetchClientNotes = async (clientId) => {
-        if (!clientId) return;
-        try {
-            const { data } = await supabase.from('clients').select('notes').eq('id', clientId).maybeSingle();
-            const n = data?.notes || '';
-            setClientNotes(n);
-            setNotesVal(n);
-        } catch (e) { console.error('notes fetch:', e); }
-    };
-
-    const fetchTaskDetails = async () => {
-        setLoading(true);
-        try {
-            const endpoint = role === 'admin' ? `/admin/tasks/${id}` : `/staff/tasks/${id}`;
-            const data = await apiFetch(endpoint);
-            if (data.success && data.data) {
-                setTask(data.data);
-                const clientId = data.data.clients?.id || data.data.client_id_raw || data.data.client_id;
-                if (clientId) {
-                    fetchClientDocs(clientId);
-                    fetchClientNotes(clientId);
-                }
-                if (role !== 'admin') localStorage.setItem(`task_opened_${id}`, new Date().toLocaleString());
-            }
-        } catch (err) { showToast('❌', 'Failed to load task details'); }
-        finally { setLoading(false); }
     };
 
     const handleSaveClientName = async () => {
@@ -140,57 +183,12 @@ export default function TaskDetail() {
         try {
             const clientId = task?.clients?.id || task?.client_id_raw || task?.client_id;
             if (!clientId) throw new Error('Client ID not found');
-            const { error } = await supabase.from('clients')
-                .update({ notes: notesVal.trim(), updated_at: new Date().toISOString() })
-                .eq('id', clientId);
+            const { error } = await supabase.from('clients').update({ notes: notesVal.trim(), updated_at: new Date().toISOString() }).eq('id', clientId);
             if (error) throw new Error(error.message);
-            setClientNotes(notesVal.trim());
-            setEditingNotes(false);
-            showToast('✅', 'Notes saved!');
+            setClientNotes(notesVal.trim()); setEditingNotes(false); showToast('✅', 'Notes saved!');
         } catch (err) { showToast('❌', 'Failed: ' + err.message); }
         finally { setSavingNotes(false); }
     };
-
-    useEffect(() => { fetchTaskDetails(); }, [id, role]);
-
-    // ── Staff first open → in_progress + webhook ──────────────────────────
-    useEffect(() => {
-        if (!task || role === 'admin' || staffOpenedRef.current) return;
-        const currentStatus = (task.status || '').toLowerCase();
-        if (currentStatus === 'in_progress' || currentStatus === 'completed') return;
-        staffOpenedRef.current = true;
-        const taskUUID = task.id || id;
-        (async () => {
-            try {
-                const { error } = await supabase.from('tasks').update({
-                    status: 'in_progress', started_at: new Date().toISOString(),
-                }).eq('id', taskUUID);
-                if (error) console.warn('started_at update error:', error.message);
-                else console.log('✅ Task marked in_progress:', taskUUID);
-            } catch (e) { console.warn('started_at update failed:', e.message); }
-            await fireInProgressWebhook(task, 'staff');
-            await fetchTaskDetails();
-        })();
-    }, [task]);
-
-    if (loading) return (<div className="app-layout"><Sidebar /><div className="main-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}><div style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>⏳ Loading Task Details...</div></div></div>);
-    if (!task) return (<div className="app-layout"><Sidebar /><div className="main-content"><div style={{ padding: '40px', textAlign: 'center' }}><h2>Task not found</h2><button className="btn-primary" style={{ margin: '20px auto' }} onClick={() => navigate('/tasks')}>Back to Tasks</button></div></div></div>);
-
-    const formatStatus = (s) => { if (!s) return 'Pending'; const l = s.toLowerCase(); if (l === 'completed') return 'Completed'; if (l === 'in_progress' || l === 'in-progress') return 'In-Progress'; return 'Pending'; };
-    const taskName = task.task_type || 'Unknown Task';
-    const statusName = formatStatus(task.status);
-    const taskSource = task.source || 'crm';
-    const allDocuments = task.documents || [];
-    const resultDocuments = allDocuments.filter(d => d.doc_type === 'result');
-    const statusColor = statusName === 'Completed' ? '#10b981' : statusName === 'In-Progress' ? '#6366f1' : '#f59e0b';
-    const statusBg = statusName === 'Completed' ? 'rgba(16,185,129,0.15)' : statusName === 'In-Progress' ? 'rgba(99,102,241,0.15)' : 'rgba(245,158,11,0.15)';
-    const formatDate = (d) => { if (!d) return '—'; try { return new Date(d).toLocaleString(); } catch { return d; } };
-    const calcDuration = (s, e) => { if (!s || !e) return '—'; try { const diff = Math.abs(new Date(e) - new Date(s)); const h = Math.floor(diff / 3600000), m = Math.floor((diff % 3600000) / 60000); return h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h ${m}m` : `${h}h ${m}m`; } catch { return '—'; } };
-    const allowedExt = ['.pdf','.doc','.docx','.xls','.xlsx','.jpg','.jpeg','.png','.gif','.bmp','.tiff','.tif','.txt','.csv','.zip','.rar','.tax'];
-    const acceptFormats = allowedExt.join(',');
-    const validateFile = (file) => { const ext = '.' + file.name.split('.').pop().toLowerCase(); if (!allowedExt.includes(ext)) { showToast('❌', `Invalid format (${ext})`); return false; } return true; };
-    const docIcon = (name) => ({ pdf:'📕',doc:'📘',docx:'📘',xls:'📗',xlsx:'📗',jpg:'🖼️',jpeg:'🖼️',png:'🖼️',zip:'📦',tax:'💸' })[(name||'').split('.').pop().toLowerCase()] || '📄';
-    const openFile = (url, name) => { if (!url || url === '[]' || url === '' || url === 'null' || url.startsWith('[')) { showToast('❌', `"${name}" — file URL invalid.`); return; } const a = document.createElement('a'); a.href = url; a.download = name || 'document'; a.target = '_blank'; a.rel = 'noreferrer'; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
 
     const handleUploadDocument = async (e) => {
         const file = e.target.files?.[0];
@@ -209,12 +207,11 @@ export default function TaskDetail() {
             let docType = 'Document';
             if (lower.includes('aadhaar') || lower.includes('aadhar')) docType = 'Aadhaar Card';
             else if (lower.includes('pan')) docType = 'PAN Card';
-            else if (lower.includes('passport')) docType = 'Passport';
             else if (lower.includes('salary') || lower.includes('payslip')) docType = 'Salary Slip';
             else if (lower.includes('bank') || lower.includes('statement')) docType = 'Bank Statement';
             else if (lower.includes('itr') || lower.includes('income')) docType = 'ITR';
             else if (lower.includes('gst')) docType = 'GST Document';
-            else if (lower.includes('form16') || lower.includes('form_16') || lower.includes('form-16')) docType = 'Form 16';
+            else if (lower.includes('form16') || lower.includes('form_16')) docType = 'Form 16';
             await supabase.from('client_documents').insert({ client_id: clientId, file_url: publicUrl, file_name: file.name, file_type: file.type || `application/${ext}`, doc_type: docType, source: 'manual' });
             showToast('✅', `Uploaded: ${file.name}`);
             await fetchClientDocs(clientId);
@@ -222,28 +219,63 @@ export default function TaskDetail() {
         finally { setUploadingDoc(false); e.target.value = ''; setDocInputKey(Date.now()); }
     };
 
+    // ── RESULT UPLOAD — status → completed + webhook ONCE ─────────────────
     const handleUploadResult = async (e) => {
         const file = e.target.files?.[0];
         if (!file || !validateFile(file)) { e.target.value = ''; return; }
         if (file.size > 50 * 1024 * 1024) { showToast('❌', 'File size exceeds 50MB'); return; }
+        if (uploading) return;
         setUploading(true);
         try {
             const taskUUID = task?.id || id;
+
+            // 1. Check if webhook already sent BEFORE upload
+            const { data: taskNow } = await supabase
+                .from('tasks')
+                .select('result_webhook_sent, status')
+                .eq('id', taskUUID)
+                .single();
+            const alreadySent = taskNow?.result_webhook_sent === true;
+
+            // 2. Upload result file
             const result = await uploadDocument(file, taskUUID, 'result');
-            showToast('✅', 'Result uploaded!'); await fetchTaskDetails();
-            try {
-                await fetch(WEBHOOK_RESULT, {
+
+            // 3. Update task: completed + mark webhook sent
+            await supabase.from('tasks').update({
+                status: 'completed',
+                completed_at: new Date().toISOString(),
+                result_webhook_sent: true,
+            }).eq('id', taskUUID);
+
+            showToast('✅', 'Result uploaded! Task completed.');
+            await fetchTaskDetails();
+
+            // 4. Fire webhook ONLY if not already sent
+            if (!alreadySent) {
+                fetch(WEBHOOK_RESULT, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        event: 'result_uploaded', task_id: task.task_code || taskUUID,
-                        client_id: task.client_code || task.client_id, task_type: task.task_type || 'N/A',
-                        client_name: task.client_name || 'N/A', mobile_number: task.client_phone || 'N/A',
-                        document: { file_name: file.name, file_size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`, file_type: file.type || file.name.split('.').pop(), doc_type: 'result', url: result.file_url },
+                        event:         'result_uploaded',
+                        task_id:       task.task_code || taskUUID,
+                        client_id:     task.client_code || task.client_id,
+                        task_type:     task.task_type || 'N/A',
+                        client_name:   task.client_name || 'N/A',
+                        mobile_number: task.client_phone || 'N/A',
+                        document: {
+                            file_name: file.name,
+                            file_size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+                            file_type: file.type || file.name.split('.').pop(),
+                            doc_type:  'result',
+                            url:       result.file_url,
+                        },
                         uploaded_at: new Date().toISOString(),
                     }),
-                });
-            } catch (wErr) { console.warn('⚠️ result webhook failed:', wErr.message); }
+                }).catch(e => console.warn('result webhook failed:', e.message));
+                console.log('✅ result webhook sent ONCE');
+            } else {
+                console.log('⚠️ result webhook already sent before, skipping');
+            }
         } catch (err) { showToast('❌', 'Upload failed: ' + err.message); }
         finally { setUploading(false); e.target.value = ''; }
     };
@@ -259,6 +291,17 @@ export default function TaskDetail() {
         finally { setCompleting(false); }
     };
 
+    if (loading) return (<div className="app-layout"><Sidebar /><div className="main-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}><div style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>⏳ Loading Task Details...</div></div></div>);
+    if (!task) return (<div className="app-layout"><Sidebar /><div className="main-content"><div style={{ padding: '40px', textAlign: 'center' }}><h2>Task not found</h2><button className="btn-primary" style={{ margin: '20px auto' }} onClick={() => navigate('/tasks')}>Back to Tasks</button></div></div></div>);
+
+    const taskName        = task.task_type || 'Unknown Task';
+    const statusName      = formatStatus(task.status);
+    const taskSource      = task.source || 'crm';
+    const allDocuments    = task.documents || [];
+    const resultDocuments = allDocuments.filter(d => d.doc_type === 'result');
+    const statusColor     = statusName === 'Completed' ? '#10b981' : statusName === 'In-Progress' ? '#6366f1' : '#f59e0b';
+    const statusBg        = statusName === 'Completed' ? 'rgba(16,185,129,0.15)' : statusName === 'In-Progress' ? 'rgba(99,102,241,0.15)' : 'rgba(245,158,11,0.15)';
+
     return (
         <div className="app-layout">
             <Sidebar />
@@ -272,9 +315,13 @@ export default function TaskDetail() {
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         {role === 'admin' ? (
                             <select value={statusName} disabled={completing} onChange={e => handleAdminStatusChange(e.target.value)} style={{ background: statusBg, color: statusColor, border: `1px solid ${statusColor}50`, padding: '6px 14px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, cursor: completing ? 'not-allowed' : 'pointer', outline: 'none', opacity: completing ? 0.6 : 1 }}>
-                                <option value="Pending">⏳ Pending</option><option value="In-Progress">🔄 In-Progress</option><option value="Completed">✅ Completed</option>
+                                <option value="Pending">⏳ Pending</option>
+                                <option value="In-Progress">🔄 In-Progress</option>
+                                <option value="Completed">✅ Completed</option>
                             </select>
-                        ) : (<span style={{ background: statusBg, color: statusColor, padding: '6px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, border: `1px solid ${statusColor}30` }}>{statusName}</span>)}
+                        ) : (
+                            <span style={{ background: statusBg, color: statusColor, padding: '6px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, border: `1px solid ${statusColor}30` }}>{statusName}</span>
+                        )}
                         {role === 'admin' && taskSource === 'admin' && statusName !== 'Completed' && (
                             <button className="btn-sm green" onClick={handleAdminComplete} disabled={completing} style={{ padding: '8px 16px', fontWeight: 700, opacity: completing ? 0.6 : 1 }}>{completing ? '⏳...' : '✅ Mark Complete'}</button>
                         )}
@@ -288,11 +335,19 @@ export default function TaskDetail() {
                         <div className="form-card" style={{ background: 'var(--bg-secondary)', borderTop: '4px solid var(--accent)' }}>
                             <h2 style={{ fontSize: '16px', marginBottom: '20px' }}>📌 Task Details</h2>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                                {[{ label: 'Task Name', value: taskName }, { label: 'Task ID', value: task.task_code || task.id, mono: true, bg: 'rgba(99,102,241,0.15)', accent: '#a5b4fc' }, { label: 'Status', value: statusName, color: statusColor }, { label: 'Source', value: taskSource === 'admin' ? '🏢 Admin Created' : '🔗 CRM', color: taskSource === 'admin' ? '#a5b4fc' : '#fbbf24' }, { label: 'Notes', value: task.notes || 'No additional notes', span: true }].map((row, i) => (
+                                {[
+                                    { label: 'Task Name', value: taskName },
+                                    { label: 'Task ID', value: task.task_code || task.id, mono: true, bg: 'rgba(99,102,241,0.15)', accent: '#a5b4fc' },
+                                    { label: 'Status', value: statusName, color: statusColor },
+                                    { label: 'Source', value: taskSource === 'admin' ? '🏢 Admin Created' : '🔗 CRM', color: taskSource === 'admin' ? '#a5b4fc' : '#fbbf24' },
+                                    { label: 'Notes', value: task.notes || 'No additional notes', span: true },
+                                ].map((row, i) => (
                                     <div key={i} style={row.span ? { gridColumn: '1/-1' } : {}}>
                                         <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '4px' }}>{row.label}</div>
-                                        {row.bg ? <span style={{ background: row.bg, color: row.accent, padding: '3px 10px', borderRadius: '6px', fontSize: '13px', fontWeight: 700, fontFamily: row.mono ? 'monospace' : 'inherit' }}>{row.value}</span>
-                                            : <div style={{ fontSize: '14px', fontWeight: 600, color: row.color || 'var(--text-primary)' }}>{row.value}</div>}
+                                        {row.bg
+                                            ? <span style={{ background: row.bg, color: row.accent, padding: '3px 10px', borderRadius: '6px', fontSize: '13px', fontWeight: 700, fontFamily: row.mono ? 'monospace' : 'inherit' }}>{row.value}</span>
+                                            : <div style={{ fontSize: '14px', fontWeight: 600, color: row.color || 'var(--text-primary)' }}>{row.value}</div>
+                                        }
                                     </div>
                                 ))}
                             </div>
@@ -316,8 +371,8 @@ export default function TaskDetail() {
                                         </div>
                                     ) : (
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{task.client_name || 'N/A'}</span>
-                                            <button onClick={() => { setClientNameVal(task.client_name || ''); setEditingClientName(true); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: 'var(--text-muted)', padding: '2px 4px' }} title="Edit name">✏️</button>
+                                            <span style={{ fontSize: '14px', fontWeight: 600 }}>{task.client_name || 'N/A'}</span>
+                                            <button onClick={() => { setClientNameVal(task.client_name || ''); setEditingClientName(true); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: 'var(--text-muted)' }}>✏️</button>
                                         </div>
                                     )}
                                 </div>
@@ -327,40 +382,20 @@ export default function TaskDetail() {
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Email</span>
-                                    <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{task.client_email || 'No Email Provided'}</span>
+                                    <span style={{ fontSize: '14px', fontWeight: 600 }}>{task.client_email || 'No Email'}</span>
                                 </div>
-
-                                {/* ── CLIENT NOTES ─────────────────────────────────────── */}
                                 <div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                                         <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>📝 Notes</span>
                                         {!editingNotes && (
-                                            <button
-                                                onClick={() => { setNotesVal(clientNotes); setEditingNotes(true); }}
-                                                style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '3px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
-                                            >
+                                            <button onClick={() => { setNotesVal(clientNotes); setEditingNotes(true); }} style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '3px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
                                                 ✏️ {clientNotes.trim() ? 'Edit' : 'Add'}
                                             </button>
                                         )}
                                     </div>
-
                                     {editingNotes ? (
                                         <div>
-                                            <textarea
-                                                autoFocus
-                                                value={notesVal}
-                                                onChange={e => setNotesVal(e.target.value)}
-                                                placeholder="Add notes about this client..."
-                                                style={{
-                                                    width: '100%', minHeight: '100px',
-                                                    background: 'rgba(255,255,255,0.04)',
-                                                    border: '1px solid rgba(245,158,11,0.4)',
-                                                    borderRadius: '10px', padding: '10px 14px',
-                                                    color: 'var(--text-primary)', fontSize: '13px',
-                                                    fontFamily: 'Inter, sans-serif', resize: 'vertical',
-                                                    outline: 'none', lineHeight: '1.6', boxSizing: 'border-box',
-                                                }}
-                                            />
+                                            <textarea autoFocus value={notesVal} onChange={e => setNotesVal(e.target.value)} placeholder="Add notes about this client..." style={{ width: '100%', minHeight: '100px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '10px', padding: '10px 14px', color: 'var(--text-primary)', fontSize: '13px', fontFamily: 'Inter, sans-serif', resize: 'vertical', outline: 'none', lineHeight: '1.6', boxSizing: 'border-box' }} />
                                             <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'flex-end' }}>
                                                 <button onClick={() => setEditingNotes(false)} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '5px 12px', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
                                                 <button onClick={handleSaveNotes} disabled={savingNotes} style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '5px 14px', borderRadius: '7px', fontSize: '12px', fontWeight: 700, cursor: savingNotes ? 'not-allowed' : 'pointer', opacity: savingNotes ? 0.6 : 1 }}>
@@ -369,19 +404,11 @@ export default function TaskDetail() {
                                             </div>
                                         </div>
                                     ) : (
-                                        <div style={{
-                                            background: clientNotes.trim() ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.02)',
-                                            border: `1px solid ${clientNotes.trim() ? 'rgba(245,158,11,0.2)' : 'var(--border)'}`,
-                                            borderRadius: '10px', padding: '10px 14px',
-                                            fontSize: '13px', color: clientNotes.trim() ? 'var(--text-primary)' : 'var(--text-muted)',
-                                            lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                                            fontStyle: clientNotes.trim() ? 'normal' : 'italic',
-                                        }}>
+                                        <div style={{ background: clientNotes.trim() ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${clientNotes.trim() ? 'rgba(245,158,11,0.2)' : 'var(--border)'}`, borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: clientNotes.trim() ? 'var(--text-primary)' : 'var(--text-muted)', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontStyle: clientNotes.trim() ? 'normal' : 'italic' }}>
                                             {clientNotes.trim() || 'No notes added yet'}
                                         </div>
                                     )}
                                 </div>
-                                {/* ─────────────────────────────────────────────────────── */}
                             </div>
                         </div>
 
@@ -410,7 +437,7 @@ export default function TaskDetail() {
                             ) : (
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '14px' }}>
                                     {clientDocs.map((d, i) => {
-                                        const isManual = d.source === 'manual';
+                                        const isManual  = d.source === 'manual';
                                         const isInvalid = !d.file_url || d.file_url === '[]' || d.file_url.startsWith('[');
                                         return (
                                             <div key={d.id || i} style={{ background: 'rgba(255,255,255,0.03)', padding: '18px', borderRadius: '14px', border: '1px solid var(--border)', textAlign: 'center', transition: 'all 0.2s' }}
@@ -428,7 +455,7 @@ export default function TaskDetail() {
                                                 ) : (
                                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', marginBottom: '4px' }}>
                                                         <div style={{ fontSize: '11px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '110px' }} title={d.file_name}>{d.file_name || 'document'}</div>
-                                                        <button onClick={() => { setFileNameVal(d.file_name || ''); setEditingFileId(d.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: 'var(--text-muted)', padding: '1px 2px', flexShrink: 0 }} title="Rename">✏️</button>
+                                                        <button onClick={() => { setFileNameVal(d.file_name || ''); setEditingFileId(d.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: 'var(--text-muted)', padding: '1px 2px', flexShrink: 0 }}>✏️</button>
                                                     </div>
                                                 )}
                                                 <div style={{ fontSize: '10px', marginBottom: '4px', fontWeight: 600, color: isInvalid ? '#ef4444' : isManual ? '#a5b4fc' : '#fbbf24' }}>
@@ -436,8 +463,7 @@ export default function TaskDetail() {
                                                 </div>
                                                 <div style={{ fontSize: '10px', color: '#64748b', marginBottom: '4px', fontWeight: 600 }}>{d.doc_type || 'Document'}</div>
                                                 <div style={{ fontSize: '9px', color: '#475569', marginBottom: '10px' }}>{new Date(d.created_at).toLocaleDateString()}</div>
-                                                <button className="btn-sm green" style={{ width: '100%', fontSize: '11px', ...(isInvalid ? { background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' } : {}) }}
-                                                    onClick={() => openFile(d.file_url, d.file_name)}>
+                                                <button className="btn-sm green" style={{ width: '100%', fontSize: '11px', ...(isInvalid ? { background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' } : {}) }} onClick={() => openFile(d.file_url, d.file_name)}>
                                                     {isInvalid ? '⚠️ Invalid' : '⬇️ Download'}
                                                 </button>
                                             </div>
@@ -447,15 +473,18 @@ export default function TaskDetail() {
                             )}
                         </div>
 
-                        {/* Result File */}
+                        {/* Result Upload */}
                         {taskSource === 'crm' && (
                             <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #e879f9' }}>
                                 <h2 style={{ fontSize: '16px', marginBottom: '20px' }}>📤 Task Result</h2>
                                 <div style={{ textAlign: 'center', padding: '20px', border: '2px dashed var(--border)', borderRadius: '12px', color: 'var(--text-muted)', marginBottom: resultDocuments.length > 0 ? '20px' : '0' }}>
                                     <div style={{ fontSize: '28px', marginBottom: '12px' }}>📁</div>
                                     <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>Upload Result File</div>
-                                    <label><input type="file" accept={acceptFormats} onChange={handleUploadResult} disabled={uploading} style={{ display: 'none' }} />
-                                        <button className="btn-sm green" onClick={e => { e.preventDefault(); e.currentTarget.previousElementSibling.click(); }} disabled={uploading} style={{ cursor: uploading ? 'not-allowed' : 'pointer', opacity: uploading ? 0.6 : 1 }}>{uploading ? '⏳ Uploading...' : '📄 Choose File'}</button>
+                                    <label>
+                                        <input type="file" accept={acceptFormats} onChange={handleUploadResult} disabled={uploading} style={{ display: 'none' }} />
+                                        <button className="btn-sm green" onClick={e => { e.preventDefault(); e.currentTarget.previousElementSibling.click(); }} disabled={uploading} style={{ cursor: uploading ? 'not-allowed' : 'pointer', opacity: uploading ? 0.6 : 1 }}>
+                                            {uploading ? '⏳ Uploading...' : '📄 Choose File'}
+                                        </button>
                                     </label>
                                 </div>
                                 {resultDocuments.length > 0 && (() => { const d = resultDocuments[resultDocuments.length - 1]; return (
@@ -463,16 +492,22 @@ export default function TaskDetail() {
                                         <div style={{ fontSize: '28px', marginBottom: '8px' }}>✅</div>
                                         <div style={{ fontSize: '14px', fontWeight: 700, color: '#e879f9', marginBottom: '12px' }}>Result File Ready</div>
                                         <button className="btn-sm green" style={{ width: '100%' }} onClick={() => openFile(d.file_url, d.file_name)}>⬇️ {d.file_name}</button>
-                                    </div>); })()}
+                                    </div>
+                                ); })()}
                                 {statusName === 'Completed' && task.completed_at && (
                                     <div style={{ textAlign: 'center', padding: '16px', background: 'rgba(16,185,129,0.1)', borderRadius: '12px', border: '1px solid rgba(16,185,129,0.3)', marginTop: '16px' }}>
                                         <div style={{ fontSize: '14px', fontWeight: 700, color: '#10b981' }}>✅ Completed on {formatDate(task.completed_at)}</div>
-                                    </div>)}
+                                    </div>
+                                )}
                             </div>
                         )}
                         {taskSource === 'admin' && statusName === 'Completed' && (
                             <div className="form-card" style={{ background: 'var(--bg-secondary)', borderLeft: '4px solid #10b981' }}>
-                                <div style={{ textAlign: 'center', padding: '24px' }}><div style={{ fontSize: '48px', marginBottom: '12px' }}>✅</div><div style={{ fontSize: '16px', fontWeight: 700, color: '#10b981', marginBottom: '6px' }}>Task Completed</div><div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Completed on {formatDate(task.completed_at)}</div></div>
+                                <div style={{ textAlign: 'center', padding: '24px' }}>
+                                    <div style={{ fontSize: '48px', marginBottom: '12px' }}>✅</div>
+                                    <div style={{ fontSize: '16px', fontWeight: 700, color: '#10b981', marginBottom: '6px' }}>Task Completed</div>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Completed on {formatDate(task.completed_at)}</div>
+                                </div>
                             </div>
                         )}
                     </div>
@@ -483,7 +518,8 @@ export default function TaskDetail() {
                             <h3 style={{ fontSize: '14px', marginBottom: '20px', color: 'var(--text-secondary)' }}>⏰ Timeline</h3>
                             <div style={{ position: 'relative', paddingLeft: '28px' }}>
                                 <div style={{ position: 'absolute', left: '7px', top: '8px', bottom: '8px', width: '2px', background: 'linear-gradient(to bottom, #f59e0b, #6366f1, #10b981)', borderRadius: '2px', opacity: 0.3 }} />
-                                {[...(role !== 'admin' ? [{ label: 'OPENED BY YOU', time: localStorage.getItem(`task_opened_${id}`) || '—', color: '#8b5cf6', active: true }] : []),
+                                {[
+                                    ...(role !== 'admin' ? [{ label: 'OPENED BY YOU', time: localStorage.getItem(`task_opened_${id}`) || '—', color: '#8b5cf6', active: true }] : []),
                                     { label: 'CREATED',   time: formatDate(task.created_at),   color: '#f59e0b', active: true },
                                     { label: 'ASSIGNED',  time: formatDate(task.assigned_at),  color: '#3b82f6', active: !!task.assigned_at },
                                     { label: 'STARTED',   time: formatDate(task.started_at),   color: '#6366f1', active: !!task.started_at },
@@ -501,14 +537,22 @@ export default function TaskDetail() {
                         <div className="form-card" style={{ background: 'var(--bg-secondary)' }}>
                             <h3 style={{ fontSize: '14px', marginBottom: '16px', color: 'var(--text-secondary)' }}>👤 Assigned Staff</h3>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '12px 16px', background: 'rgba(255,255,255,0.03)', borderRadius: '14px', border: '1px solid var(--border)' }}>
-                                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'linear-gradient(135deg, var(--accent), #4f46e5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 800, color: '#fff' }}>{typeof task.staff_name === 'string' ? task.staff_name.charAt(0) : '?'}</div>
-                                <div><div style={{ fontSize: '14px', fontWeight: 700 }}>{task.staff_name || 'Unassigned'}</div><div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Team Member</div></div>
+                                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'linear-gradient(135deg, var(--accent), #4f46e5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 800, color: '#fff' }}>
+                                    {typeof task.staff_name === 'string' ? task.staff_name.charAt(0) : '?'}
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '14px', fontWeight: 700 }}>{task.staff_name || 'Unassigned'}</div>
+                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Team Member</div>
+                                </div>
                             </div>
                         </div>
                         <div className="form-card" style={{ background: 'var(--bg-secondary)' }}>
                             <h3 style={{ fontSize: '14px', marginBottom: '16px', color: 'var(--text-secondary)' }}>📊 Summary</h3>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                {[{ label: 'Attached Docs', value: clientDocs.length, icon: '📁', color: '#a5b4fc' }, { label: 'Result Files', value: resultDocuments.length, icon: '📋', color: '#e879f9' }].map((s, i) => (
+                                {[
+                                    { label: 'Attached Docs', value: clientDocs.length,      icon: '📁', color: '#a5b4fc' },
+                                    { label: 'Result Files',  value: resultDocuments.length, icon: '📋', color: '#e879f9' },
+                                ].map((s, i) => (
                                     <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: '10px', border: '1px solid var(--border)' }}>
                                         <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{s.icon} {s.label}</span>
                                         <span style={{ fontSize: '16px', fontWeight: 800, color: s.color }}>{s.value}</span>

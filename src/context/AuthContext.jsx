@@ -1,9 +1,8 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { apiFetch } from '../api';
+import { supabase } from '../api';
 
 const AuthContext = createContext();
 
-// Today's date string — "2026-03-24"
 const getTodayDate = () => new Date().toISOString().split('T')[0];
 
 export function AuthProvider({ children }) {
@@ -11,20 +10,14 @@ export function AuthProvider({ children }) {
         try {
             const saved = localStorage.getItem('sp_auth_user');
             if (!saved) return null;
-
             const parsed = JSON.parse(saved);
-
-            // ── New day check ─────────────────────────────────────────────
             const loginDate = localStorage.getItem('sp_login_date');
             const today = getTodayDate();
-
             if (!loginDate || loginDate !== today) {
-                // Different day — force logout
                 localStorage.removeItem('sp_auth_user');
                 localStorage.removeItem('sp_login_date');
                 return null;
             }
-
             return parsed;
         } catch {
             return null;
@@ -40,68 +33,70 @@ export function AuthProvider({ children }) {
         }
     }, [user]);
 
-    // ── Background: every 1 min date change check ─────────────────────────
     useEffect(() => {
         if (!user) return;
-
         const interval = setInterval(() => {
             const loginDate = localStorage.getItem('sp_login_date');
             const today = getTodayDate();
-            if (!loginDate || loginDate !== today) {
-                setUser(null); // New day — auto logout
-            }
+            if (!loginDate || loginDate !== today) setUser(null);
         }, 60 * 1000);
-
         return () => clearInterval(interval);
     }, [user]);
 
-    const login = async (role, emailInput = '') => {
+    const login = async (role, emailInput = '', passwordInput = '') => {
         try {
-            if (role === 'auto') {
-                const data = await apiFetch('/auth/login', {
-                    method: 'POST',
-                    body: JSON.stringify({ email: emailInput }),
-                });
-                if (data.success) {
-                    setUser({
-                        role:  data.user.role,
-                        name:  data.user.name,
-                        email: data.user.email,
-                        id:    data.user.id,
-                        token: data.token,
-                    });
+            const email = emailInput.toLowerCase().trim();
+            const password = passwordInput.trim();
+            if (!email || !password) return false;
+
+            // ── Verify via DB bcrypt (pgcrypto) ──────────────────────────
+            // Check admins
+            const { data: adminRows } = await supabase.rpc('verify_password', {
+                p_email: email,
+                p_password: password,
+                p_table: 'admins'
+            });
+
+            if (adminRows?.verified) {
+                const { data: adminData } = await supabase
+                    .from('admins')
+                    .select('id, name, email')
+                    .eq('email', email)
+                    .eq('status', 'active')
+                    .maybeSingle();
+                if (adminData) {
+                    setUser({ role: 'admin', name: adminData.name, email: adminData.email, id: adminData.id, token: 'admin-' + adminData.id });
                     localStorage.setItem('sp_login_date', getTodayDate());
                     return true;
                 }
-                return false;
             }
 
-            if (role === 'admin') {
-                const data = await apiFetch('/auth/login', {
-                    method: 'POST',
-                    body: JSON.stringify({ email: 'admin@taxportal.com' }),
-                });
-                if (data.success) {
-                    setUser({ role: 'admin', name: data.user.name, email: data.user.email, id: data.user.id, token: data.token });
-                    localStorage.setItem('sp_login_date', getTodayDate());
-                    return true;
-                }
-            } else {
-                if (!emailInput) return false;
-                const data = await apiFetch('/auth/login', {
-                    method: 'POST',
-                    body: JSON.stringify({ email: emailInput }),
-                });
-                if (data.success) {
-                    setUser({ role: data.user.role, name: data.user.name, email: data.user.email, id: data.user.id, token: data.token });
+            // Check staff
+            const { data: staffRows } = await supabase.rpc('verify_password', {
+                p_email: email,
+                p_password: password,
+                p_table: 'staff'
+            });
+
+            if (staffRows?.verified) {
+                const { data: staffData } = await supabase
+                    .from('staff')
+                    .select('id, name, email')
+                    .eq('email', email)
+                    .eq('status', 'active')
+                    .maybeSingle();
+                if (staffData) {
+                    setUser({ role: 'staff', name: staffData.name, email: staffData.email, id: staffData.id, token: 'staff-' + staffData.id });
                     localStorage.setItem('sp_login_date', getTodayDate());
                     return true;
                 }
             }
+
+            return false;
         } catch (err) {
             console.error('Login failed:', err.message);
+            return false;
         }
-        return false;
     };
 
     const logout = () => setUser(null);

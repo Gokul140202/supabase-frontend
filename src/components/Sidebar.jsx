@@ -44,9 +44,11 @@ export default function Sidebar() {
                         <NavLink to="/clients" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
                             <span className="nav-icon">👥</span> Manage Clients
                         </NavLink>
-
                         <NavLink to="/attendance" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
-                            <span className="nav-icon">👨‍💼</span> Staff & Attendance
+                            <span className="nav-icon">📅</span> Staff & Attendance
+                        </NavLink>
+                        <NavLink to="/staff-management" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+                            <span className="nav-icon">⚙️</span> Staff Management
                         </NavLink>
                         <NavLink to="/reports" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
                             <span className="nav-icon">📈</span> Audit Reports

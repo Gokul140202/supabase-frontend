@@ -8,6 +8,7 @@ import TaskDetail from './pages/TaskDetail';
 import Rework from './pages/Rework';
 import ReworkDetail from './pages/ReworkDetail';
 import Login from './pages/Login';
+import StaffManagement from './pages/Staffmanagement';
 
 import Sidebar from './components/Sidebar';
 import { useAuth } from './context/AuthContext';
@@ -19,7 +20,7 @@ const PlaceholderPage = ({ title }) => (
             <div className="topbar"><h1 className="topbar-title">{title}</h1></div>
             <div className="page-content">
                 <div className="table-card" style={{ padding: '40px', textAlign: 'center' }}>
-                    <h2 style={{ color: '#94a3b8' }}>Analysis & Dummy Data for {title} coming soon...</h2>
+                    <h2 style={{ color: '#94a3b8' }}>Coming soon...</h2>
                 </div>
             </div>
         </div>
@@ -47,12 +48,9 @@ export default function App() {
             <Route path="/rework" element={<Rework />} />
             <Route path="/rework/:id" element={<ReworkDetail />} />
             <Route path="/attendance" element={<Attendance />} />
-
             <Route path="/reports" element={<Reports />} />
-
-            {/* Keeping others as placeholders but with Sidebar */}
+            <Route path="/staff-management" element={<StaffManagement />} />
             <Route path="/todo" element={<PlaceholderPage title="To-Do List" />} />
-
             <Route path="/login" element={<Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

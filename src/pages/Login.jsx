@@ -6,19 +6,22 @@ export default function Login() {
     const [loading, setLoading] = useState(false);
     const [mode, setMode] = useState('none'); // 'none' | 'admin' | 'staff'
     const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
 
     const handleLogin = async (e) => {
         e.preventDefault();
         if (!email.trim()) { setError('Please enter your email address'); return; }
+        if (!password.trim()) { setError('Please enter your password'); return; }
         setError('');
         setLoading(true);
-        const success = await login('auto', email.trim().toLowerCase());
-        if (!success) setError('Email not found or account inactive.');
+        const success = await login('auto', email.trim().toLowerCase(), password.trim());
+        if (!success) setError('Invalid email or password.');
         setLoading(false);
     };
 
-    const handleBack = () => { setMode('none'); setEmail(''); setError(''); };
+    const handleBack = () => { setMode('none'); setEmail(''); setPassword(''); setError(''); };
 
     return (
         <div style={{
@@ -78,7 +81,7 @@ export default function Login() {
                             }}
                             onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
                             onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
-                            onClick={() => { setMode('admin'); setEmail(''); setError(''); }}
+                            onClick={() => { setMode('admin'); setEmail(''); setPassword(''); setError(''); }}
                         >
                             🔐 Login as Administrator
                         </button>
@@ -104,14 +107,14 @@ export default function Login() {
                             }}
                             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.transform = 'translateY(0)'; }}
-                            onClick={() => { setMode('staff'); setEmail(''); setError(''); }}
+                            onClick={() => { setMode('staff'); setEmail(''); setPassword(''); setError(''); }}
                         >
                             👤 Login as Staff Member
                         </button>
                     </div>
                 )}
 
-                {/* Mode: Admin / Staff — Email input */}
+                {/* Mode: Admin / Staff — Email + Password */}
                 {(mode === 'admin' || mode === 'staff') && (
                     <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
 
@@ -135,7 +138,7 @@ export default function Login() {
                             </label>
                             <input
                                 type="email"
-                                placeholder={mode === 'admin' ? 'Enter Taxportal ID' : 'Enter Taxportal ID'}
+                                placeholder="Enter your email"
                                 value={email}
                                 onChange={e => { setEmail(e.target.value); setError(''); }}
                                 autoFocus
@@ -157,6 +160,47 @@ export default function Login() {
                             />
                         </div>
 
+                        {/* Password */}
+                        <div style={{ textAlign: 'left' }}>
+                            <label style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
+                                Password
+                            </label>
+                            <div style={{ position: 'relative' }}>
+                                <input
+                                    type={showPassword ? 'text' : 'password'}
+                                    placeholder="Enter your password"
+                                    value={password}
+                                    onChange={e => { setPassword(e.target.value); setError(''); }}
+                                    disabled={loading}
+                                    style={{
+                                        width: '100%',
+                                        padding: '13px 46px 13px 16px',
+                                        borderRadius: '12px',
+                                        border: error ? '1px solid rgba(239,68,68,0.5)' : '1px solid rgba(255,255,255,0.1)',
+                                        background: 'rgba(255,255,255,0.05)',
+                                        color: '#fff',
+                                        fontSize: '14px',
+                                        outline: 'none',
+                                        boxSizing: 'border-box',
+                                        transition: 'border-color 0.2s',
+                                    }}
+                                    onFocus={e => e.target.style.borderColor = 'rgba(99,102,241,0.6)'}
+                                    onBlur={e => e.target.style.borderColor = error ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.1)'}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    style={{
+                                        position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)',
+                                        background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px',
+                                        color: '#64748b', padding: '4px',
+                                    }}
+                                >
+                                    {showPassword ? '🙈' : '👁️'}
+                                </button>
+                            </div>
+                        </div>
+
                         {/* Error */}
                         {error && (
                             <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: '#f87171', textAlign: 'left' }}>
@@ -176,17 +220,17 @@ export default function Login() {
                             </button>
                             <button
                                 type="submit"
-                                disabled={loading || !email.trim()}
+                                disabled={loading || !email.trim() || !password.trim()}
                                 style={{
                                     flex: 2,
                                     padding: '13px',
                                     fontSize: '14px',
                                     fontWeight: 700,
-                                    background: loading || !email.trim() ? 'rgba(99,102,241,0.4)' : 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                                    background: (loading || !email.trim() || !password.trim()) ? 'rgba(99,102,241,0.4)' : 'linear-gradient(135deg, #6366f1, #4f46e5)',
                                     border: 'none',
                                     borderRadius: '12px',
                                     color: '#fff',
-                                    cursor: loading || !email.trim() ? 'not-allowed' : 'pointer',
+                                    cursor: (loading || !email.trim() || !password.trim()) ? 'not-allowed' : 'pointer',
                                     transition: 'all 0.2s',
                                 }}
                             >
@@ -198,7 +242,7 @@ export default function Login() {
 
                 <p style={{ marginTop: '32px', fontSize: '11px', color: '#334155', lineHeight: 1.6 }}>
                     Authorized Personnel Only.<br />
-                    All sessions are monitored and logged.<br/>
+                    All sessions are monitored and logged.<br />
                     Powered by JHB Automations
                 </p>
             </div>
