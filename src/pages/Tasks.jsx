@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
 import Toast from '../components/Toast';
 import useToast from '../hooks/useToast';
@@ -17,9 +17,10 @@ export default function Tasks() {
     const [showAssignModal, setShowAssignModal] = useState(false);
     const [backendStaff, setBackendStaff] = useState([]);
     const [newTask, setNewTask] = useState({ task: '', client: '', staffId: '' });
-    // Staff reassign states
-    const [reassigning, setReassigning] = useState(null); // task id being reassigned
-    const [statusChanging, setStatusChanging] = useState(null); // task id being status changed
+    const [reassigning, setReassigning] = useState(null);
+    const [statusChanging, setStatusChanging] = useState(null);
+    const [liveIndicator, setLiveIndicator] = useState(false); // realtime pulse
+    const channelRef = useRef(null);
 
     const fetchTasks = async () => {
         setLoading(true);
@@ -51,6 +52,85 @@ export default function Tasks() {
                 if (res.success && res.data) setBackendStaff(res.data);
             }).catch(() => {});
         }
+    }, [role]);
+
+    // ── Supabase Realtime: live status sync ────────────────────────────────
+    useEffect(() => {
+        if (!role) return;
+
+        // Cleanup previous channel
+        if (channelRef.current) {
+            supabase.removeChannel(channelRef.current);
+        }
+
+        const channel = supabase
+            .channel('tasks-realtime-' + role)
+            .on(
+                'postgres_changes',
+                { event: 'UPDATE', schema: 'public', table: 'tasks' },
+                (payload) => {
+                    const updated = payload.new;
+                    if (!updated?.id) return;
+
+                    // Live pulse indicator
+                    setLiveIndicator(true);
+                    setTimeout(() => setLiveIndicator(false), 2000);
+
+                    // Update the matching task's status in local state
+                    setTasks(prev => prev.map(t => {
+                        if (t.id !== updated.id) return t;
+
+                        const formatStatus = (s) => {
+                            if (!s) return 'Pending';
+                            const l = s.toLowerCase();
+                            if (l === 'completed') return 'Completed';
+                            if (l === 'in_progress' || l === 'in-progress') return 'In-Progress';
+                            return 'Pending';
+                        };
+
+                        const formatDate = (d) => {
+                            if (!d) return '-';
+                            try { return new Date(d).toLocaleString(); } catch { return d; }
+                        };
+
+                        return {
+                            ...t,
+                            status:      formatStatus(updated.status),
+                            openedAt:    formatDate(updated.started_at),
+                            completedAt: formatDate(updated.completed_at),
+                            raw: { ...t.raw, ...updated },
+                        };
+                    }));
+                }
+            )
+            .on(
+                'postgres_changes',
+                { event: 'INSERT', schema: 'public', table: 'tasks' },
+                () => {
+                    // New task added → full refresh
+                    fetchTasks();
+                }
+            )
+            .on(
+                'postgres_changes',
+                { event: 'DELETE', schema: 'public', table: 'tasks' },
+                (payload) => {
+                    if (payload.old?.id) {
+                        setTasks(prev => prev.filter(t => t.id !== payload.old.id));
+                    }
+                }
+            )
+            .subscribe((status) => {
+                if (status === 'SUBSCRIBED') {
+                    console.log('✅ Realtime subscribed — tasks table');
+                }
+            });
+
+        channelRef.current = channel;
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
     }, [role]);
 
     const handleRefresh = async () => {
@@ -95,7 +175,6 @@ export default function Tasks() {
         }
     };
 
-    // ── Staff Reassign ──
     const handleReassignStaff = async (taskId, newStaffId) => {
         if (!newStaffId) return;
         setReassigning(taskId);
@@ -114,7 +193,6 @@ export default function Tasks() {
         }
     };
 
-    // ── Status Change ──
     const handleStatusChange = async (taskId, newStatus) => {
         if (!newStatus) return;
         setStatusChanging(taskId);
@@ -156,7 +234,6 @@ export default function Tasks() {
         return 'assigned';
     };
 
-    // Find current staff id from task raw data
     const getTaskStaffId = (task) => {
         return task.raw?.staff?.id || task.raw?.assigned_staff || null;
     };
@@ -168,6 +245,21 @@ export default function Tasks() {
                 <div className="topbar">
                     <h1 className="topbar-title">{role === 'admin' ? '📝 Assignment Center' : '📋 My Tasks'}</h1>
                     <div className="topbar-actions">
+                        {/* ── Live indicator ── */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <div style={{
+                                width: '8px', height: '8px', borderRadius: '50%',
+                                background: liveIndicator ? '#f59e0b' : '#10b981',
+                                boxShadow: liveIndicator
+                                    ? '0 0 8px #f59e0b'
+                                    : '0 0 8px #10b981',
+                                transition: 'all 0.3s',
+                            }} />
+                            <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                                {liveIndicator ? 'Updating...' : 'Live'}
+                            </span>
+                        </div>
+
                         {role === 'admin' && (
                             <button className="btn-primary" onClick={() => setShowAssignModal(true)}>+ New Assignment</button>
                         )}
@@ -219,7 +311,6 @@ export default function Tasks() {
                                                 <div style={{ fontWeight: 600 }}>{t.task}</div>
                                                 <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.client}</div>
                                             </td>
-                                            {/* ── STAFF COLUMN: Admin = dropdown, Staff = static ── */}
                                             <td>
                                                 {role === 'admin' ? (
                                                     <select
@@ -241,9 +332,7 @@ export default function Tasks() {
                                                     >
                                                         <option value="">-- Select --</option>
                                                         {backendStaff.map(s => (
-                                                            <option key={s.id} value={s.id}>
-                                                                {s.name}
-                                                            </option>
+                                                            <option key={s.id} value={s.id}>{s.name}</option>
                                                         ))}
                                                     </select>
                                                 ) : (
@@ -253,7 +342,6 @@ export default function Tasks() {
                                             <td style={{ fontSize: '12px', color: 'var(--accent)' }}>{t.openedAt !== '-' ? t.openedAt : '—'}</td>
                                             <td style={{ fontSize: '12px', color: '#34d399' }}>{t.completedAt !== '-' ? t.completedAt : '—'}</td>
                                             <td style={{ fontSize: '12px', color: '#e879f9', fontWeight: 600 }}>{getDuration(t.openedAt, t.completedAt)}</td>
-                                            {/* ── STATUS COLUMN: Admin = dropdown, Staff = static ── */}
                                             <td>
                                                 {role === 'admin' ? (
                                                     <select

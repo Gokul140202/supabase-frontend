@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Sidebar from '../components/Sidebar';
 import Toast from '../components/Toast';
 import useToast from '../hooks/useToast';
@@ -22,12 +22,16 @@ export default function StaffManagement() {
 
     // New staff modal
     const [showAddModal, setShowAddModal] = useState(false);
-    const [newStaff, setNewStaff] = useState({ name: '', email: '', password: 'jkfinstride@123', category: 'ITR_FILING' });
+    const [newStaff, setNewStaff] = useState({
+        name: '',
+        email: '',
+        password: 'jkfinstride@123',
+        category: 'ITR_FILING',
+    });
     const [adding, setAdding] = useState(false);
 
-    if (role !== 'admin') return <Navigate to="/" replace />;
-
-    const fetchStaff = async () => {
+    // ── fetchStaff defined BEFORE any conditional return ──────────────────
+    const fetchStaff = useCallback(async () => {
         setLoading(true);
         const { data, error } = await supabase
             .from('staff')
@@ -35,10 +39,16 @@ export default function StaffManagement() {
             .order('created_at');
         if (!error) setStaffList(data || []);
         setLoading(false);
-    };
+    }, []);
 
-    useEffect(() => { fetchStaff(); }, []);
+    useEffect(() => {
+        if (role === 'admin') fetchStaff();
+    }, [role, fetchStaff]);
 
+    // ── Guard: non-admin redirect (AFTER hooks) ───────────────────────────
+    if (role !== 'admin') return <Navigate to="/" replace />;
+
+    // ── Edit helpers ──────────────────────────────────────────────────────
     const startEdit = (s) => {
         setEditingId(s.id);
         setEditName(s.name || '');
@@ -59,17 +69,18 @@ export default function StaffManagement() {
         try {
             const updates = {
                 name: editName.trim(),
-                email: editEmail.trim(),
+                email: editEmail.trim().toLowerCase(),
                 updated_at: new Date().toISOString(),
             };
+
             if (editPassword.trim()) {
-                // Hash password via DB function before saving
                 const { data: hashData, error: hashError } = await supabase.rpc('hash_password', {
-                    p_password: editPassword.trim()
+                    p_password: editPassword.trim(),
                 });
                 if (hashError) throw new Error('Hash failed: ' + hashError.message);
                 updates.password = hashData;
             }
+
             const { error } = await supabase.from('staff').update(updates).eq('id', staffId);
             if (error) throw new Error(error.message);
             showToast('✅', 'Staff updated successfully!');
@@ -84,26 +95,43 @@ export default function StaffManagement() {
 
     const handleToggleStatus = async (staffId, currentStatus) => {
         const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
-        const { error } = await supabase.from('staff').update({ status: newStatus }).eq('id', staffId);
+        const { error } = await supabase
+            .from('staff')
+            .update({ status: newStatus })
+            .eq('id', staffId);
         if (!error) {
             showToast('✅', `Staff ${newStatus === 'active' ? 'activated' : 'deactivated'}!`);
             await fetchStaff();
+        } else {
+            showToast('❌', 'Status update failed: ' + error.message);
         }
     };
 
+    // ── FIX: hash password before inserting new staff ─────────────────────
     const handleAddStaff = async () => {
-        if (!newStaff.name.trim() || !newStaff.email.trim()) return showToast('⚠️', 'Name & Email required');
+        if (!newStaff.name.trim() || !newStaff.email.trim())
+            return showToast('⚠️', 'Name & Email required');
+
         setAdding(true);
         try {
+            // 1. Hash the password via Supabase RPC
+            const rawPassword = newStaff.password.trim() || 'jkfinstride@123';
+            const { data: hashedPwd, error: hashError } = await supabase.rpc('hash_password', {
+                p_password: rawPassword,
+            });
+            if (hashError) throw new Error('Password hash failed: ' + hashError.message);
+
+            // 2. Insert staff with hashed password
             const { error } = await supabase.from('staff').insert({
                 name: newStaff.name.trim(),
                 email: newStaff.email.trim().toLowerCase(),
-                password: newStaff.password.trim() || 'jkfinstride@123',
+                password: hashedPwd,           // ✅ hashed, not plain text
                 category: [newStaff.category],
                 status: 'active',
             });
             if (error) throw new Error(error.message);
-            showToast('✅', 'Staff added!');
+
+            showToast('✅', `Staff "${newStaff.name.trim()}" added successfully!`);
             setShowAddModal(false);
             setNewStaff({ name: '', email: '', password: 'jkfinstride@123', category: 'ITR_FILING' });
             await fetchStaff();
@@ -114,7 +142,7 @@ export default function StaffManagement() {
         }
     };
 
-    const categories = ['ITR_FILING', 'GST_FILING', 'AUDIT', 'TDS', 'ACCOUNTING'];
+    const categories = ['ITR_FILING', 'GST_FILING', 'AUDIT'];
 
     return (
         <div className="app-layout">
@@ -122,18 +150,18 @@ export default function StaffManagement() {
             <div className="main-content">
                 <div className="topbar">
                     <h1 className="topbar-title">👨‍💼 Staff Management</h1>
-                    <button className="btn-primary" onClick={() => setShowAddModal(true)}>
+                    {/* <button className="btn-primary" onClick={() => setShowAddModal(true)}>
                         ➕ Add New Staff
-                    </button>
+                    </button> */}
                 </div>
 
                 <div className="page-content">
-                    {/* Stats */}
+                    {/* ── Stats ── */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
                         {[
-                            { label: 'Total Staff', value: staffList.length, icon: '👥', color: '#a5b4fc' },
-                            { label: 'Active', value: staffList.filter(s => s.status === 'active').length, icon: '✅', color: '#34d399' },
-                            { label: 'Inactive', value: staffList.filter(s => s.status !== 'active').length, icon: '⛔', color: '#f87171' },
+                            { label: 'Total Staff',  value: staffList.length,                                    icon: '👥', color: '#a5b4fc' },
+                            { label: 'Active',       value: staffList.filter(s => s.status === 'active').length, icon: '✅', color: '#34d399' },
+                            { label: 'Inactive',     value: staffList.filter(s => s.status !== 'active').length, icon: '⛔', color: '#f87171' },
                         ].map((s, i) => (
                             <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '16px', padding: '20px', display: 'flex', alignItems: 'center', gap: '14px' }}>
                                 <div style={{ fontSize: '24px' }}>{s.icon}</div>
@@ -145,7 +173,7 @@ export default function StaffManagement() {
                         ))}
                     </div>
 
-                    {/* Staff Table */}
+                    {/* ── Staff Table ── */}
                     <div className="table-card">
                         <div className="table-header">
                             <span style={{ fontWeight: 700, fontSize: '15px' }}>👨‍💼 All Staff Members</span>
@@ -154,6 +182,11 @@ export default function StaffManagement() {
 
                         {loading ? (
                             <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>⏳ Loading...</div>
+                        ) : staffList.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                                <div style={{ fontSize: '32px', marginBottom: '12px' }}>👤</div>
+                                <div>No staff members yet. Add one!</div>
+                            </div>
                         ) : (
                             <table>
                                 <thead>
@@ -248,12 +281,12 @@ export default function StaffManagement() {
                                                             <span style={{ fontFamily: 'monospace', fontSize: '13px', color: showPassFor === s.id ? '#fff' : 'var(--text-muted)', background: 'rgba(255,255,255,0.05)', padding: '3px 10px', borderRadius: '6px', letterSpacing: showPassFor === s.id ? '0' : '2px' }}>
                                                                 {showPassFor === s.id ? (s.password || '—') : '••••••••'}
                                                             </span>
-                                                            <button
+                                                            {/* <button
                                                                 onClick={() => setShowPassFor(showPassFor === s.id ? null : s.id)}
                                                                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: 'var(--text-muted)', padding: '2px' }}
                                                             >
-                                                                {showPassFor === s.id ? '🙈' : '👁️'}
-                                                            </button>
+                                                                {showPassFor === s.id ? 'Hide' : 'Show'}
+                                                            </button> */}
                                                         </div>
                                                     </td>
                                                     <td>
@@ -296,34 +329,90 @@ export default function StaffManagement() {
 
             {/* ── ADD STAFF MODAL ── */}
             {showAddModal && (
-                <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowAddModal(false)}>
-                    <div className="form-card" style={{ width: '420px', background: 'var(--bg-secondary)', border: '1px solid var(--border-active)' }}>
+                <div
+                    className="modal-overlay"
+                    onClick={e => e.target === e.currentTarget && setShowAddModal(false)}
+                >
+                    <div
+                        className="form-card"
+                        style={{ width: '420px', background: 'var(--bg-secondary)', border: '1px solid var(--border-active)' }}
+                    >
                         <h2 style={{ fontSize: '18px', marginBottom: '20px' }}>➕ Add New Staff</h2>
+
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                             <div>
-                                <label style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>FULL NAME</label>
-                                <input className="form-input" placeholder="e.g. Ravi Kumar" value={newStaff.name} onChange={e => setNewStaff({ ...newStaff, name: e.target.value })} />
+                                <label style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>
+                                    FULL NAME
+                                </label>
+                                <input
+                                    className="form-input"
+                                    placeholder="e.g. Ravi Kumar"
+                                    value={newStaff.name}
+                                    onChange={e => setNewStaff({ ...newStaff, name: e.target.value })}
+                                />
                             </div>
+
                             <div>
-                                <label style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>EMAIL</label>
-                                <input className="form-input" type="email" placeholder="staff@taxportal.com" value={newStaff.email} onChange={e => setNewStaff({ ...newStaff, email: e.target.value })} />
+                                <label style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>
+                                    EMAIL
+                                </label>
+                                <input
+                                    className="form-input"
+                                    type="email"
+                                    placeholder="staff@taxportal.com"
+                                    value={newStaff.email}
+                                    onChange={e => setNewStaff({ ...newStaff, email: e.target.value })}
+                                />
                             </div>
+
                             <div>
-                                <label style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>PASSWORD</label>
-                                <input className="form-input" placeholder="Password" value={newStaff.password} onChange={e => setNewStaff({ ...newStaff, password: e.target.value })} />
+                                <label style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>
+                                    PASSWORD
+                                </label>
+                                <input
+                                    className="form-input"
+                                    placeholder="Default: jkfinstride@123"
+                                    value={newStaff.password}
+                                    onChange={e => setNewStaff({ ...newStaff, password: e.target.value })}
+                                />
+                                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                    🔒 Password will be securely hashed before saving
+                                </div>
                             </div>
+
                             <div>
-                                <label style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>CATEGORY</label>
-                                <select className="form-input" value={newStaff.category} onChange={e => setNewStaff({ ...newStaff, category: e.target.value })}>
+                                <label style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>
+                                    CATEGORY
+                                </label>
+                                <select
+                                    className="form-input"
+                                    value={newStaff.category}
+                                    onChange={e => setNewStaff({ ...newStaff, category: e.target.value })}
+                                >
                                     {categories.map(c => <option key={c} value={c}>{c}</option>)}
                                 </select>
                             </div>
                         </div>
+
                         <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
-                            <button className="btn-primary" style={{ flex: 1 }} onClick={handleAddStaff} disabled={adding}>
+                            <button
+                                className="btn-primary"
+                                style={{ flex: 1 }}
+                                onClick={handleAddStaff}
+                                disabled={adding}
+                            >
                                 {adding ? '⏳ Adding...' : '✅ Add Staff'}
                             </button>
-                            <button className="btn-sm" style={{ flex: 1 }} onClick={() => setShowAddModal(false)}>Cancel</button>
+                            <button
+                                className="btn-sm"
+                                style={{ flex: 1 }}
+                                onClick={() => {
+                                    setShowAddModal(false);
+                                    setNewStaff({ name: '', email: '', password: 'jkfinstride@123', category: 'ITR_FILING' });
+                                }}
+                            >
+                                Cancel
+                            </button>
                         </div>
                     </div>
                 </div>

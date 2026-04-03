@@ -83,7 +83,7 @@ export default function Login() {
                             onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
                             onClick={() => { setMode('admin'); setEmail(''); setPassword(''); setError(''); }}
                         >
-                            🔐 Login as Administrator
+                            Login as Administrator
                         </button>
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -109,7 +109,7 @@ export default function Login() {
                             onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.transform = 'translateY(0)'; }}
                             onClick={() => { setMode('staff'); setEmail(''); setPassword(''); setError(''); }}
                         >
-                            👤 Login as Staff Member
+                            Login as Staff Member
                         </button>
                     </div>
                 )}
@@ -128,7 +128,7 @@ export default function Login() {
                             fontWeight: 700,
                             color: mode === 'admin' ? '#a5b4fc' : '#34d399',
                         }}>
-                            {mode === 'admin' ? '🔐 Administrator Login' : '👤 Staff Login'}
+                            {mode === 'admin' ? 'Administrator Login' : 'Staff Login'}
                         </div>
 
                         {/* Email */}
@@ -196,7 +196,7 @@ export default function Login() {
                                         color: '#64748b', padding: '4px',
                                     }}
                                 >
-                                    {showPassword ? '🙈' : '👁️'}
+                                    {showPassword ? 'Hide' : 'Show'}
                                 </button>
                             </div>
                         </div>
@@ -234,7 +234,7 @@ export default function Login() {
                                     transition: 'all 0.2s',
                                 }}
                             >
-                                {loading ? '⏳ Verifying...' : '🔐 Sign In'}
+                                {loading ? '⏳ Verifying...' : 'Sign In'}
                             </button>
                         </div>
                     </form>

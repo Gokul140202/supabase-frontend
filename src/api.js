@@ -74,10 +74,19 @@ const mapReworkRow = (r) => ({
     documents:     r.rework_documents       || [],
 });
 
+// ✅ Mobile number support — existing client-க்கும் phone update பண்றோம்
 const upsertClientByName = async (clientName, phone = null) => {
     const { data: existing } = await supabase
-        .from('clients').select('id').eq('name', clientName).maybeSingle();
-    if (existing) return existing.id;
+        .from('clients').select('id, phone').eq('name', clientName).maybeSingle();
+
+    if (existing) {
+        // Existing client-க்கு phone இல்லன்னா / empty-ஆ இருந்தா update பண்ணு
+        if (phone && (!existing.phone || existing.phone.length < 10)) {
+            await supabase.from('clients').update({ phone }).eq('id', existing.id);
+        }
+        return existing.id;
+    }
+
     const { data: created, error } = await supabase
         .from('clients')
         .insert({ name: clientName, phone: phone || Date.now().toString().slice(-10) })
@@ -169,7 +178,6 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true, data: mapTaskRow(data) };
         }
 
-        // ── FIX: Only update started_at if NOT already started/completed ─────
         if (path === '/staff/tasks/start' && method === 'PATCH') {
             const { taskId } = body || {};
             const { data: existing } = await supabase.from('tasks').select('status').eq('id', taskId).maybeSingle();
@@ -197,7 +205,6 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true };
         }
 
-        // ── ADMIN: Task status change (any status) ────────────────────────────
         if (path === '/admin/tasks/changestatus' && method === 'PATCH') {
             const { taskId, status } = body || {};
             if (!taskId || !status) throw new Error('taskId and status required');
@@ -212,13 +219,23 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true };
         }
 
+        // ✅ UPDATED: mobile number support add பண்ணோம்
         if (path === '/admin/create-task' && method === 'POST') {
-            const { clientName, taskType, staffId } = body || {};
+            const { clientName, taskType, staffId, mobile } = body || {};
             if (!clientName || !taskType || !staffId) throw new Error('clientName, taskType, staffId required');
-            const clientId = await upsertClientByName(clientName);
+
+            // mobile pass பண்றோம் — client create/update-ல phone save ஆகும்
+            const clientId = await upsertClientByName(clientName, mobile || null);
+
             const { data: task, error } = await supabase.from('tasks')
-                .insert({ client_id: clientId, task_type: taskType, assigned_staff: staffId,
-                    assigned_at: new Date().toISOString(), status: 'assigned', source: 'admin' })
+                .insert({
+                    client_id: clientId,
+                    task_type: taskType,
+                    assigned_staff: staffId,
+                    assigned_at: new Date().toISOString(),
+                    status: 'assigned',
+                    source: 'admin'
+                })
                 .select('id').single();
             if (error) throw error;
             await supabase.rpc('increment_task_count', { staff_id: staffId }).maybeSingle();
@@ -238,7 +255,7 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true };
         }
 
-        // ── CLIENT DOCUMENTS (CRM வழியா வந்த docs) ───────────────────────────
+        // ── CLIENT DOCUMENTS ──────────────────────────────────────────────────
         const clientDocsMatch = path.match(/^\/clients\/([^/]+)\/documents$/);
         if (clientDocsMatch && method === 'GET') {
             const clientId = clientDocsMatch[1];
@@ -399,7 +416,6 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true, data: rework };
         }
 
-        // ── FIX: Only update started_at if NOT already started/completed ─────
         if (path === '/reworks/start' && method === 'PATCH') {
             const { reworkId } = body || {};
             const { data: existing } = await supabase.from('reworks').select('status').eq('id', reworkId).maybeSingle();
@@ -412,7 +428,6 @@ export const apiFetch = async (endpoint, options = {}) => {
             return { success: true };
         }
 
-        // ── ADMIN: Rework status change ───────────────────────────────────────
         if (path === '/admin/reworks/changestatus' && method === 'PATCH') {
             const { reworkId, status } = body || {};
             if (!reworkId || !status) throw new Error('reworkId and status required');

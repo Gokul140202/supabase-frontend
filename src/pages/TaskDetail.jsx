@@ -34,7 +34,7 @@ export default function TaskDetail() {
     const [notesVal, setNotesVal]                   = useState('');
     const [savingNotes, setSavingNotes]             = useState(false);
 
-    // ── KEY: This ref prevents duplicate in_progress trigger ──────────────
+    // ── This ref prevents duplicate in_progress trigger ──────────────────
     const inProgressDone = useRef(false);
 
     const formatStatus = (s) => {
@@ -101,44 +101,70 @@ export default function TaskDetail() {
 
     useEffect(() => { fetchTaskDetails(); }, [fetchTaskDetails]);
 
-    // ── STAFF: task open → in_progress + webhook (ONCE) ──────────────────
+    // ── STAFF: task open → in_progress + webhook (ONCE per session) ──────
     useEffect(() => {
         if (!task || role === 'admin') return;
         if (inProgressDone.current) return; // session-level lock
-        if (task.inprogress_webhook_sent === true) return; // already sent before
-        if (task.status === 'completed') return; // completed tasks skip
 
-        inProgressDone.current = true; // lock immediately
+        // Already completed → skip everything
+        if (task.status === 'completed') {
+            inProgressDone.current = true;
+            return;
+        }
+
+        inProgressDone.current = true; // lock immediately to prevent double-fire
 
         (async () => {
             try {
-                // Update status → in_progress + mark webhook sent
-                await supabase.from('tasks').update({
-                    status: 'in_progress',
-                    started_at: task.started_at || new Date().toISOString(),
-                    inprogress_webhook_sent: true,
-                }).eq('id', task.id);
+                const alreadyInProgress = task.status === 'in_progress';
 
-                // Fire webhook
-                await fetch(WEBHOOK_IN_PROGRESS, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        event:         'task_status_changed_to_in_progress',
-                        triggered_by:  'staff',
-                        task_id:       task.task_code || task.id,
-                        client_id:     task.client_code || task.client_id || '',
-                        client_name:   task.client_name || '',
-                        task_type:     task.task_type || '',
-                        staff_name:    task.staff_name || '',
-                        mobile_number: task.client_phone || '',
-                        changed_at:    new Date().toISOString(),
-                    }),
-                });
-                console.log('✅ in_progress webhook sent');
+                // Step 1: Status update (only if still pending/assigned)
+                if (!alreadyInProgress) {
+                    const { error: updateError } = await supabase
+                        .from('tasks')
+                        .update({
+                            status: 'in_progress',
+                            started_at: new Date().toISOString(),
+                        })
+                        .eq('id', task.id);
+
+                    if (updateError) {
+                        console.warn('⚠️ Status update failed:', updateError.message);
+                        // status update fail ஆனாலும் webhook fire பண்றோம்
+                    } else {
+                        console.log('✅ Status → in_progress');
+                    }
+                }
+
+                // Step 2: Webhook fire (only for pending → in_progress transition)
+                if (!alreadyInProgress) {
+                    try {
+                        const webhookRes = await fetch(WEBHOOK_IN_PROGRESS, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                event:         'task_status_changed_to_in_progress',
+                                triggered_by:  'staff',
+                                task_id:       task.task_code || task.id,
+                                client_id:     task.client_code || task.client_id || '',
+                                client_name:   task.client_name || '',
+                                task_type:     task.task_type || '',
+                                staff_name:    task.staff_name || '',
+                                mobile_number: task.client_phone || '',
+                                changed_at:    new Date().toISOString(),
+                            }),
+                        });
+                        console.log('✅ in_progress webhook sent, status:', webhookRes.status);
+                    } catch (webhookErr) {
+                        console.warn('⚠️ Webhook fire failed:', webhookErr.message);
+                    }
+                }
+
+                // Step 3: Refresh task details
                 await fetchTaskDetails();
+
             } catch (e) {
-                console.warn('in_progress webhook error:', e.message);
+                console.warn('in_progress flow error:', e.message);
             }
         })();
     }, [task?.id]);
