@@ -3,9 +3,11 @@ import Sidebar from '../components/Sidebar';
 import useToast from '../hooks/useToast';
 import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiFetch } from '../api';
 import { supabase } from '../api';
+
+const WEBHOOK_REWORK_IN_PROGRESS = 'https://services.leadconnectorhq.com/hooks/GmLfYZp3rjJ0jWt1nZtb/webhook-trigger/911fc6ce-b3bf-41be-9966-afec900372bd';
 
 export default function ReworkDetail() {
     const { id } = useParams();
@@ -13,6 +15,7 @@ export default function ReworkDetail() {
     const { role } = useAuth();
     const { toast, showToast } = useToast();
     const [rework, setRework] = useState(null);
+    const inProgressDone = useRef(false);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
     const [uploadingDoc, setUploadingDoc] = useState(false);
@@ -59,6 +62,59 @@ export default function ReworkDetail() {
     };
 
     useEffect(() => { fetchRework(); }, [id, role]);
+
+    // ── STAFF: rework open → in_progress + webhook (DB flag use pannurom) ───
+    useEffect(() => {
+        if (!rework || role === 'admin') return;
+        if (inProgressDone.current) return;
+        if (rework.status === 'completed') { inProgressDone.current = true; return; }
+        if (rework.inprogress_webhook_sent) { inProgressDone.current = true; return; }
+
+        inProgressDone.current = true;
+
+        (async () => {
+            try {
+                const needsStatusUpdate = rework.status !== 'in_progress';
+                const dbUpdates = { inprogress_webhook_sent: true };
+                if (needsStatusUpdate) {
+                    dbUpdates.status = 'in_progress';
+                    dbUpdates.started_at = new Date().toISOString();
+                }
+
+                const { error } = await supabase.from('reworks').update(dbUpdates).eq('id', rework.id);
+                if (error) console.warn('⚠️ Rework DB update failed:', error.message);
+                else console.log('✅ Rework → in_progress, inprogress_webhook_sent = true');
+
+                // Webhook fire
+                try {
+                    const res = await fetch(WEBHOOK_REWORK_IN_PROGRESS, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            event:         'rework_status_changed_to_in_progress',
+                            triggered_by:  'staff',
+                            rework_id:     rework.rework_code || rework.id,
+                            client_id:     rework.client_code || rework.client_id_raw || '',
+                            client_name:   rework.client_name || '',
+                            task_type:     rework.task_type || '',
+                            staff_id:      rework.staff?.staff_code || rework.staff?.id || '',
+                            staff_name:    rework.staff_name || '',
+                            mobile_number: rework.client_phone || '',
+                            rework_reason: rework.rework_reason || '',
+                            changed_at:    new Date().toISOString(),
+                        }),
+                    });
+                    console.log('✅ rework in_progress webhook sent, status:', res.status);
+                } catch (webhookErr) {
+                    console.warn('⚠️ Rework webhook failed:', webhookErr.message);
+                }
+
+                await fetchRework();
+            } catch (e) {
+                console.warn('rework in_progress flow error:', e.message);
+            }
+        })();
+    }, [rework?.id]);
 
     const handleAdminStatusChange = async (newStatus) => {
         if (completing) return;

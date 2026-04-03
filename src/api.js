@@ -30,6 +30,7 @@ const getCurrentStaffId = () => {
 const TASK_SELECT = `
     id, task_type, status, assigned_at, started_at, completed_at,
     notes, created_at, updated_at, priority, deadline, source, task_code,
+    inprogress_webhook_sent,
     clients:client_id ( id, name, phone, email, client_code ),
     staff:assigned_staff ( id, name, email, staff_code ),
     documents ( id, file_url, file_name, file_type, doc_type, created_at )
@@ -38,6 +39,7 @@ const TASK_SELECT = `
 const REWORK_SELECT = `
     id, task_type, status, rework_reason, assigned_at, started_at,
     completed_at, notes, created_at, updated_at, priority, rework_code,
+    inprogress_webhook_sent,
     clients:client_id ( id, name, phone, email, client_code ),
     staff:assigned_staff ( id, name, email, staff_code ),
     rework_documents ( id, file_url, file_name, file_type, doc_type, created_at )
@@ -213,7 +215,7 @@ export const apiFetch = async (endpoint, options = {}) => {
             const updates = { status };
             if (status === 'in_progress') updates.started_at = new Date().toISOString();
             if (status === 'completed')   updates.completed_at = new Date().toISOString();
-            if (status === 'assigned')    { updates.started_at = null; updates.completed_at = null; }
+            if (status === 'assigned')    { updates.started_at = null; updates.completed_at = null; updates.inprogress_webhook_sent = false; }
             const { error } = await supabase.from('tasks').update(updates).eq('id', taskId);
             if (error) throw error;
             return { success: true };

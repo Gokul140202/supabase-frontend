@@ -200,6 +200,7 @@ export default function Tasks() {
             const updates = { status: newStatus };
             if (newStatus === 'in_progress') updates.started_at = new Date().toISOString();
             if (newStatus === 'completed') updates.completed_at = new Date().toISOString();
+            if (newStatus === 'assigned') { updates.started_at = null; updates.completed_at = null; updates.inprogress_webhook_sent = false; }
 
             const { error } = await supabase
                 .from('tasks')
@@ -294,7 +295,7 @@ export default function Tasks() {
                                         <th>ASSIGNED</th>
                                         <th>TASK & CLIENT</th>
                                         <th>STAFF</th>
-                                        <th>OPENED</th>
+                                        <th>START TIME</th>
                                         <th>COMPLETED</th>
                                         <th>DURATION</th>
                                         <th>STATUS</th>
@@ -378,18 +379,7 @@ export default function Tasks() {
                                             </td>
                                             <td>
                                                 <div style={{ display: 'flex', gap: '8px' }}>
-                                                    <button className="btn-sm green" onClick={async () => {
-                                                        if (role !== 'admin') {
-                                                            try {
-                                                                await apiFetch('/staff/tasks/start', { method: 'PATCH', body: JSON.stringify({ taskId: t.id }) });
-                                                                showToast('✅', 'Task started!');
-                                                                await fetchTasks();
-                                                            } catch (err) {
-                                                                showToast('❌', 'Failed: ' + err.message);
-                                                            }
-                                                        }
-                                                        navigate(`/tasks/${t.id}`);
-                                                    }}>
+                                                    <button className="btn-sm green" onClick={() => navigate(`/tasks/${t.id}`)}>
                                                         {role === 'admin' ? '👁️ View' : '👁️ View & Start'}
                                                     </button>
                                                     {role === 'admin' && (

@@ -93,7 +93,6 @@ export default function TaskDetail() {
                 setTask(data.data);
                 const clientId = data.data.clients?.id || data.data.client_id_raw || data.data.client_id;
                 if (clientId) { fetchClientDocs(clientId); fetchClientNotes(clientId); }
-                if (role !== 'admin') localStorage.setItem(`task_opened_${id}`, new Date().toLocaleString());
             }
         } catch { showToast('❌', 'Failed to load task details'); }
         finally { setLoading(false); }
@@ -101,7 +100,7 @@ export default function TaskDetail() {
 
     useEffect(() => { fetchTaskDetails(); }, [fetchTaskDetails]);
 
-    // ── STAFF: task open → in_progress + webhook (ONCE per session) ──────
+    // ── STAFF: task open → in_progress + webhook (ONCE, tracked by DB flag) ─
     useEffect(() => {
         if (!task || role === 'admin') return;
         if (inProgressDone.current) return; // session-level lock
@@ -112,52 +111,56 @@ export default function TaskDetail() {
             return;
         }
 
+        // Webhook already sent for this task → skip
+        if (task.inprogress_webhook_sent) {
+            inProgressDone.current = true;
+            return;
+        }
+
         inProgressDone.current = true; // lock immediately to prevent double-fire
 
         (async () => {
             try {
-                const alreadyInProgress = task.status === 'in_progress';
+                const needsStatusUpdate = task.status !== 'in_progress';
 
-                // Step 1: Status update (only if still pending/assigned)
-                if (!alreadyInProgress) {
-                    const { error: updateError } = await supabase
-                        .from('tasks')
-                        .update({
-                            status: 'in_progress',
-                            started_at: new Date().toISOString(),
-                        })
-                        .eq('id', task.id);
-
-                    if (updateError) {
-                        console.warn('⚠️ Status update failed:', updateError.message);
-                        // status update fail ஆனாலும் webhook fire பண்றோம்
-                    } else {
-                        console.log('✅ Status → in_progress');
-                    }
+                // Step 1: Update status to in_progress (if not already) + mark webhook sent
+                const dbUpdates = { inprogress_webhook_sent: true };
+                if (needsStatusUpdate) {
+                    dbUpdates.status = 'in_progress';
+                    dbUpdates.started_at = new Date().toISOString();
                 }
 
-                // Step 2: Webhook fire (only for pending → in_progress transition)
-                if (!alreadyInProgress) {
-                    try {
-                        const webhookRes = await fetch(WEBHOOK_IN_PROGRESS, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                event:         'task_status_changed_to_in_progress',
-                                triggered_by:  'staff',
-                                task_id:       task.task_code || task.id,
-                                client_id:     task.client_code || task.client_id || '',
-                                client_name:   task.client_name || '',
-                                task_type:     task.task_type || '',
-                                staff_name:    task.staff_name || '',
-                                mobile_number: task.client_phone || '',
-                                changed_at:    new Date().toISOString(),
-                            }),
-                        });
-                        console.log('✅ in_progress webhook sent, status:', webhookRes.status);
-                    } catch (webhookErr) {
-                        console.warn('⚠️ Webhook fire failed:', webhookErr.message);
-                    }
+                const { error: updateError } = await supabase
+                    .from('tasks')
+                    .update(dbUpdates)
+                    .eq('id', task.id);
+
+                if (updateError) {
+                    console.warn('⚠️ DB update failed:', updateError.message);
+                } else {
+                    console.log('✅ Status → in_progress, inprogress_webhook_sent = true');
+                }
+
+                // Step 2: Fire webhook
+                try {
+                    const webhookRes = await fetch(WEBHOOK_IN_PROGRESS, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            event:         'task_status_changed_to_in_progress',
+                            triggered_by:  'staff',
+                            task_id:       task.task_code || task.id,
+                            client_id:     task.client_code || task.client_id_raw || '',
+                            client_name:   task.client_name || '',
+                            task_type:     task.task_type || '',
+                            staff_name:    task.staff_name || '',
+                            mobile_number: task.client_phone || '',
+                            changed_at:    new Date().toISOString(),
+                        }),
+                    });
+                    console.log('✅ in_progress webhook sent, status:', webhookRes.status);
+                } catch (webhookErr) {
+                    console.warn('⚠️ Webhook fire failed:', webhookErr.message);
                 }
 
                 // Step 3: Refresh task details
@@ -245,7 +248,7 @@ export default function TaskDetail() {
         finally { setUploadingDoc(false); e.target.value = ''; setDocInputKey(Date.now()); }
     };
 
-    // ── RESULT UPLOAD — status → completed + webhook ONCE ─────────────────
+    // ── RESULT UPLOAD — old result deleted, webhook always fires ─────────────
     const handleUploadResult = async (e) => {
         const file = e.target.files?.[0];
         if (!file || !validateFile(file)) { e.target.value = ''; return; }
@@ -255,53 +258,58 @@ export default function TaskDetail() {
         try {
             const taskUUID = task?.id || id;
 
-            // 1. Check if webhook already sent BEFORE upload
-            const { data: taskNow } = await supabase
-                .from('tasks')
-                .select('result_webhook_sent, status')
-                .eq('id', taskUUID)
-                .single();
-            const alreadySent = taskNow?.result_webhook_sent === true;
+            // 1. Delete old result docs — CRM-ku only new file poganum
+            await supabase
+                .from('documents')
+                .delete()
+                .eq('task_id', taskUUID)
+                .eq('doc_type', 'result');
 
-            // 2. Upload result file
+            // 2. Upload new result file
             const result = await uploadDocument(file, taskUUID, 'result');
 
-            // 3. Update task: completed + mark webhook sent
+            // 3. Update task: completed + reset webhook flag
             await supabase.from('tasks').update({
                 status: 'completed',
                 completed_at: new Date().toISOString(),
                 result_webhook_sent: true,
             }).eq('id', taskUUID);
 
+            // 3b. DB-la irunthu fresh assigned_staff + staff_code fetch — stale task state use pannama
+            const { data: freshTask } = await supabase
+                .from('tasks')
+                .select('assigned_staff, task_code, task_type, staff:assigned_staff ( id, staff_code )')
+                .eq('id', taskUUID)
+                .single();
+            const currentStaffCode = freshTask?.staff?.staff_code || task.staff?.staff_code || freshTask?.assigned_staff || '';
+
             showToast('✅', 'Result uploaded! Task completed.');
             await fetchTaskDetails();
 
-            // 4. Fire webhook ONLY if not already sent
-            if (!alreadySent) {
-                fetch(WEBHOOK_RESULT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        event:         'result_uploaded',
-                        task_id:       task.task_code || taskUUID,
-                        client_id:     task.client_code || task.client_id,
-                        task_type:     task.task_type || 'N/A',
-                        client_name:   task.client_name || 'N/A',
-                        mobile_number: task.client_phone || 'N/A',
-                        document: {
-                            file_name: file.name,
-                            file_size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-                            file_type: file.type || file.name.split('.').pop(),
-                            doc_type:  'result',
-                            url:       result.file_url,
-                        },
-                        uploaded_at: new Date().toISOString(),
-                    }),
-                }).catch(e => console.warn('result webhook failed:', e.message));
-                console.log('✅ result webhook sent ONCE');
-            } else {
-                console.log('⚠️ result webhook already sent before, skipping');
-            }
+            // 4. Always fire webhook — current assigned staff id use pannurom
+            fetch(WEBHOOK_RESULT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    event:         'result_uploaded',
+                    task_id:       task.task_code || taskUUID,
+                    client_id:     task.client_code || task.client_id_raw || '',
+                    task_type:     task.task_type || 'N/A',
+                    client_name:   task.client_name || 'N/A',
+                    mobile_number: task.client_phone || 'N/A',
+                    staff_id:      currentStaffCode,
+                    document: {
+                        file_name: file.name,
+                        file_size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+                        file_type: file.type || file.name.split('.').pop(),
+                        doc_type:  'result',
+                        url:       result.file_url,
+                    },
+                    uploaded_at: new Date().toISOString(),
+                }),
+            }).catch(err => console.warn('result webhook failed:', err.message));
+            console.log('✅ result webhook fired, staff_id:', currentStaffCode);
+
         } catch (err) { showToast('❌', 'Upload failed: ' + err.message); }
         finally { setUploading(false); e.target.value = ''; }
     };
@@ -545,7 +553,6 @@ export default function TaskDetail() {
                             <div style={{ position: 'relative', paddingLeft: '28px' }}>
                                 <div style={{ position: 'absolute', left: '7px', top: '8px', bottom: '8px', width: '2px', background: 'linear-gradient(to bottom, #f59e0b, #6366f1, #10b981)', borderRadius: '2px', opacity: 0.3 }} />
                                 {[
-                                    ...(role !== 'admin' ? [{ label: 'OPENED BY YOU', time: localStorage.getItem(`task_opened_${id}`) || '—', color: '#8b5cf6', active: true }] : []),
                                     { label: 'CREATED',   time: formatDate(task.created_at),   color: '#f59e0b', active: true },
                                     { label: 'ASSIGNED',  time: formatDate(task.assigned_at),  color: '#3b82f6', active: !!task.assigned_at },
                                     { label: 'STARTED',   time: formatDate(task.started_at),   color: '#6366f1', active: !!task.started_at },
