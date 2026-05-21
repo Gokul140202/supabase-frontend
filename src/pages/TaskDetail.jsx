@@ -30,8 +30,11 @@ export default function TaskDetail() {
     const [fileNameVal, setFileNameVal]             = useState('');
     const [savingFileId, setSavingFileId]           = useState(null);
     const [clientNotes, setClientNotes]             = useState('');
-    const [editingNotes, setEditingNotes]           = useState(false);
-    const [notesVal, setNotesVal]                   = useState('');
+    const [crmNotes, setCrmNotes]                   = useState('');
+    const [addingNote, setAddingNote]               = useState(false);
+    const [newNoteText, setNewNoteText]             = useState('');
+    const [editingStaffNote, setEditingStaffNote]   = useState(false);
+    const [staffNoteVal, setStaffNoteVal]           = useState('');
     const [savingNotes, setSavingNotes]             = useState(false);
 
     // ── This ref prevents duplicate in_progress trigger ──────────────────
@@ -79,8 +82,9 @@ export default function TaskDetail() {
     const fetchClientNotes = async (clientId) => {
         if (!clientId) return;
         try {
-            const { data } = await supabase.from('clients').select('notes').eq('id', clientId).maybeSingle();
-            const n = data?.notes || ''; setClientNotes(n); setNotesVal(n);
+            const { data } = await supabase.from('clients').select('notes, crm_notes').eq('id', clientId).maybeSingle();
+            setClientNotes(data?.notes || '');
+            setCrmNotes(data?.crm_notes || '');
         } catch {}
     };
 
@@ -99,6 +103,9 @@ export default function TaskDetail() {
     }, [id, role]);
 
     useEffect(() => { fetchTaskDetails(); }, [fetchTaskDetails]);
+
+    // ── Reset in-progress lock when navigating to a different task ───────────
+    useEffect(() => { inProgressDone.current = false; }, [id]);
 
     // ── STAFF: task open → in_progress + webhook (ONCE, tracked by DB flag) ─
     useEffect(() => {
@@ -143,7 +150,7 @@ export default function TaskDetail() {
 
                 // Step 2: Fire webhook
                 try {
-                    const webhookRes = await fetch(WEBHOOK_IN_PROGRESS, {
+                    await fetch(WEBHOOK_IN_PROGRESS, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -158,7 +165,7 @@ export default function TaskDetail() {
                             changed_at:    new Date().toISOString(),
                         }),
                     });
-                    console.log('✅ in_progress webhook sent, status:', webhookRes.status);
+                    console.log('✅ in_progress webhook sent');
                 } catch (webhookErr) {
                     console.warn('⚠️ Webhook fire failed:', webhookErr.message);
                 }
@@ -206,15 +213,26 @@ export default function TaskDetail() {
         finally { setSavingFileId(null); }
     };
 
-    const handleSaveNotes = async () => {
+    const handleSaveNotes = async (isEdit = false) => {
         if (savingNotes) return;
+        const value = isEdit ? staffNoteVal.trim() : newNoteText.trim();
+        if (!value) return;
         setSavingNotes(true);
         try {
             const clientId = task?.clients?.id || task?.client_id_raw || task?.client_id;
             if (!clientId) throw new Error('Client ID not found');
-            const { error } = await supabase.from('clients').update({ notes: notesVal.trim(), updated_at: new Date().toISOString() }).eq('id', clientId);
+            let newNotes;
+            if (isEdit) {
+                newNotes = value;
+            } else {
+                newNotes = clientNotes.trim() ? clientNotes.trim() + '\n\n' + value : value;
+            }
+            const { error } = await supabase.from('clients').update({ notes: newNotes, updated_at: new Date().toISOString() }).eq('id', clientId);
             if (error) throw new Error(error.message);
-            setClientNotes(notesVal.trim()); setEditingNotes(false); showToast('✅', 'Notes saved!');
+            setClientNotes(newNotes);
+            setAddingNote(false); setNewNoteText('');
+            setEditingStaffNote(false); setStaffNoteVal('');
+            showToast('✅', isEdit ? 'Note updated!' : 'Note added!');
         } catch (err) { showToast('❌', 'Failed: ' + err.message); }
         finally { setSavingNotes(false); }
     };
@@ -287,28 +305,30 @@ export default function TaskDetail() {
             await fetchTaskDetails();
 
             // 4. Always fire webhook — current assigned staff id use pannurom
-            fetch(WEBHOOK_RESULT, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    event:         'result_uploaded',
-                    task_id:       task.task_code || taskUUID,
-                    client_id:     task.client_code || task.client_id_raw || '',
-                    task_type:     task.task_type || 'N/A',
-                    client_name:   task.client_name || 'N/A',
-                    mobile_number: task.client_phone || 'N/A',
-                    staff_id:      currentStaffCode,
-                    document: {
-                        file_name: file.name,
-                        file_size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-                        file_type: file.type || file.name.split('.').pop(),
-                        doc_type:  'result',
-                        url:       result.file_url,
-                    },
-                    uploaded_at: new Date().toISOString(),
-                }),
-            }).catch(err => console.warn('result webhook failed:', err.message));
-            console.log('✅ result webhook fired, staff_id:', currentStaffCode);
+            try {
+                const wRes = await fetch(WEBHOOK_RESULT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event:         'result_uploaded',
+                        task_id:       task.task_code || taskUUID,
+                        client_id:     task.client_code || task.client_id_raw || '',
+                        task_type:     task.task_type || 'N/A',
+                        client_name:   task.client_name || 'N/A',
+                        mobile_number: task.client_phone || 'N/A',
+                        staff_id:      currentStaffCode,
+                        document: {
+                            file_name: file.name,
+                            file_size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+                            file_type: file.type || file.name.split('.').pop(),
+                            doc_type:  'result',
+                            url:       result.file_url,
+                        },
+                        uploaded_at: new Date().toISOString(),
+                    }),
+                });
+                console.log('✅ result webhook fired, status:', wRes.status);
+            } catch (wErr) { console.warn('❌ result webhook failed:', wErr.message); }
 
         } catch (err) { showToast('❌', 'Upload failed: ' + err.message); }
         finally { setUploading(false); e.target.value = ''; }
@@ -421,25 +441,63 @@ export default function TaskDetail() {
                                 <div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                                         <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>📝 Notes</span>
-                                        {!editingNotes && (
-                                            <button onClick={() => { setNotesVal(clientNotes); setEditingNotes(true); }} style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '3px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
-                                                ✏️ {clientNotes.trim() ? 'Edit' : 'Add'}
+                                        {!addingNote && !editingStaffNote && (
+                                            <button onClick={() => setAddingNote(true)} style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '3px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                                                + Add Note
                                             </button>
                                         )}
                                     </div>
-                                    {editingNotes ? (
+
+                                    {/* CRM Notes — locked, protected */}
+                                    {crmNotes.trim() && (
+                                        <div style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: 'var(--text-primary)', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: '8px', position: 'relative' }}>
+                                            <div style={{ position: 'absolute', top: '8px', right: '10px', fontSize: '10px', color: '#a5b4fc', display: 'flex', alignItems: 'center', gap: '3px', fontWeight: 700 }}>
+                                                🔒 CRM
+                                            </div>
+                                            <div style={{ paddingRight: '55px' }}>{crmNotes.trim()}</div>
+                                        </div>
+                                    )}
+
+                                    {/* Staff Notes — editable */}
+                                    {!editingStaffNote && !addingNote && (
+                                        clientNotes.trim() ? (
+                                            <div style={{ background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.15)', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: 'var(--text-primary)', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word', position: 'relative' }}>
+                                                <div style={{ position: 'absolute', top: '8px', right: '10px', fontSize: '10px', color: '#fbbf24', fontWeight: 700 }}>✏️ Staff</div>
+                                                <div style={{ paddingRight: '55px', marginBottom: '8px' }}>{clientNotes.trim()}</div>
+                                                <button onClick={() => { setStaffNoteVal(clientNotes.trim()); setEditingStaffNote(true); }} style={{ fontSize: '11px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '3px 10px', borderRadius: '6px', fontWeight: 700, cursor: 'pointer' }}>✏️ Edit</button>
+                                            </div>
+                                        ) : (
+                                            !crmNotes.trim() && (
+                                                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.6', fontStyle: 'italic' }}>
+                                                    No notes added yet
+                                                </div>
+                                            )
+                                        )
+                                    )}
+
+                                    {/* Edit staff note */}
+                                    {editingStaffNote && (
                                         <div>
-                                            <textarea autoFocus value={notesVal} onChange={e => setNotesVal(e.target.value)} placeholder="Add notes about this client..." style={{ width: '100%', minHeight: '100px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '10px', padding: '10px 14px', color: 'var(--text-primary)', fontSize: '13px', fontFamily: 'Inter, sans-serif', resize: 'vertical', outline: 'none', lineHeight: '1.6', boxSizing: 'border-box' }} />
+                                            <textarea autoFocus value={staffNoteVal} onChange={e => setStaffNoteVal(e.target.value)} style={{ width: '100%', minHeight: '80px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '10px', padding: '10px 14px', color: 'var(--text-primary)', fontSize: '13px', fontFamily: 'Inter, sans-serif', resize: 'vertical', outline: 'none', lineHeight: '1.6', boxSizing: 'border-box' }} />
                                             <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'flex-end' }}>
-                                                <button onClick={() => setEditingNotes(false)} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '5px 12px', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-                                                <button onClick={handleSaveNotes} disabled={savingNotes} style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '5px 14px', borderRadius: '7px', fontSize: '12px', fontWeight: 700, cursor: savingNotes ? 'not-allowed' : 'pointer', opacity: savingNotes ? 0.6 : 1 }}>
+                                                <button onClick={() => { setEditingStaffNote(false); setStaffNoteVal(''); }} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '5px 12px', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                                                <button onClick={() => handleSaveNotes(true)} disabled={savingNotes || !staffNoteVal.trim()} style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '5px 14px', borderRadius: '7px', fontSize: '12px', fontWeight: 700, cursor: (savingNotes || !staffNoteVal.trim()) ? 'not-allowed' : 'pointer', opacity: (savingNotes || !staffNoteVal.trim()) ? 0.5 : 1 }}>
                                                     {savingNotes ? '⏳...' : '✅ Save'}
                                                 </button>
                                             </div>
                                         </div>
-                                    ) : (
-                                        <div style={{ background: clientNotes.trim() ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${clientNotes.trim() ? 'rgba(245,158,11,0.2)' : 'var(--border)'}`, borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: clientNotes.trim() ? 'var(--text-primary)' : 'var(--text-muted)', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontStyle: clientNotes.trim() ? 'normal' : 'italic' }}>
-                                            {clientNotes.trim() || 'No notes added yet'}
+                                    )}
+
+                                    {/* Add new note */}
+                                    {addingNote && (
+                                        <div>
+                                            <textarea autoFocus value={newNoteText} onChange={e => setNewNoteText(e.target.value)} placeholder="Type new note to append..." style={{ width: '100%', minHeight: '80px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '10px', padding: '10px 14px', color: 'var(--text-primary)', fontSize: '13px', fontFamily: 'Inter, sans-serif', resize: 'vertical', outline: 'none', lineHeight: '1.6', boxSizing: 'border-box' }} />
+                                            <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'flex-end' }}>
+                                                <button onClick={() => { setAddingNote(false); setNewNoteText(''); }} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '5px 12px', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                                                <button onClick={() => handleSaveNotes(false)} disabled={savingNotes || !newNoteText.trim()} style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '5px 14px', borderRadius: '7px', fontSize: '12px', fontWeight: 700, cursor: (savingNotes || !newNoteText.trim()) ? 'not-allowed' : 'pointer', opacity: (savingNotes || !newNoteText.trim()) ? 0.5 : 1 }}>
+                                                    {savingNotes ? '⏳...' : '✅ Save'}
+                                                </button>
+                                            </div>
                                         </div>
                                     )}
                                 </div>

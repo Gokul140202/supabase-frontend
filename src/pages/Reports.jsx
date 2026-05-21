@@ -14,6 +14,7 @@ export default function Reports() {
     const [filterStatus, setFilterStatus] = useState('All');
     const [filterMonth, setFilterMonth] = useState(''); // '' = All months
     const [filterYear, setFilterYear]   = useState(''); // '' = All years
+    const [search, setSearch] = useState('');
 
     const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -63,7 +64,9 @@ export default function Reports() {
     const tasks    = allTasks;
     const filtered = tasks.filter(t => {
         const statusMatch = filterStatus === 'All' || t.status === filterStatus;
-        return statusMatch && matchesMonthYear(t);
+        const q = search.toLowerCase();
+        const searchMatch = !q || t.client?.toLowerCase().includes(q) || t.task?.toLowerCase().includes(q) || t.users?.toLowerCase().includes(q);
+        return statusMatch && matchesMonthYear(t) && searchMatch;
     });
 
     // Stats computed from filtered tasks
@@ -106,8 +109,8 @@ export default function Reports() {
         }).filter(Boolean)
     ])].sort((a, b) => b - a);
 
-    const clearFilters = () => { setFilterMonth(''); setFilterYear(''); setFilterStatus('All'); };
-    const hasFilter = filterMonth || filterYear || filterStatus !== 'All';
+    const clearFilters = () => { setFilterMonth(''); setFilterYear(''); setFilterStatus('All'); setSearch(''); };
+    const hasFilter = filterMonth || filterYear || filterStatus !== 'All' || search;
 
     return (
         <div className="app-layout">
@@ -119,6 +122,14 @@ export default function Reports() {
                         {role === 'admin' ? '📊 Audit Reports — All Staff' : '📊 My Task Reports'}
                     </h1>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        {/* Search */}
+                        <input
+                            type="text"
+                            placeholder="🔍 Search client, task, staff..."
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: '#fff', padding: '7px 12px', borderRadius: '8px', fontSize: '13px', outline: 'none', width: '220px' }}
+                        />
                         {/* Month Filter */}
                         <select
                             value={filterMonth}

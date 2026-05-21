@@ -21,7 +21,11 @@ export default function Clients() {
 
     // ── Notes state ──────────────────────────────────────────────────────
     const [notesVal, setNotesVal] = useState('');
-    const [editingNotes, setEditingNotes] = useState(false);
+    const [crmNotesVal, setCrmNotesVal] = useState('');
+    const [addingNote, setAddingNote] = useState(false);
+    const [newNoteText, setNewNoteText] = useState('');
+    const [editingStaffNote, setEditingStaffNote] = useState(false);
+    const [staffNoteVal, setStaffNoteVal] = useState('');
     const [savingNotes, setSavingNotes] = useState(false);
 
     useEffect(() => {
@@ -113,18 +117,23 @@ export default function Clients() {
         setActiveTab('crm_docs');
         setClientDocs([]);
         setResultDocs([]);
-        setEditingNotes(false);
+        setAddingNote(false);
+        setNewNoteText('');
+        setEditingStaffNote(false);
+        setStaffNoteVal('');
 
         // Fetch notes from supabase clients table
         try {
             const { data: clientData } = await supabase
                 .from('clients')
-                .select('notes')
+                .select('notes, crm_notes')
                 .eq('id', client.id)
                 .maybeSingle();
             setNotesVal(clientData?.notes || '');
+            setCrmNotesVal(clientData?.crm_notes || '');
         } catch (e) {
             setNotesVal(client.notes || '');
+            setCrmNotesVal('');
         }
 
         setClientDocsLoading(true);
@@ -177,19 +186,23 @@ export default function Clients() {
     };
 
     // ── Save notes to supabase ────────────────────────────────────────────
-    const handleSaveNotes = async () => {
+    const handleSaveNotes = async (isEdit = false) => {
         if (savingNotes) return;
+        const value = isEdit ? staffNoteVal.trim() : newNoteText.trim();
+        if (!value) return;
         setSavingNotes(true);
         try {
+            const newNotes = isEdit ? value : (notesVal.trim() ? notesVal.trim() + '\n\n' + value : value);
             const { error } = await supabase
                 .from('clients')
-                .update({ notes: notesVal.trim(), updated_at: new Date().toISOString() })
+                .update({ notes: newNotes, updated_at: new Date().toISOString() })
                 .eq('id', selectedClient.id);
             if (error) throw new Error(error.message);
-            setEditingNotes(false);
-            showToast('✅', 'Notes saved!');
-            // Update local state
-            setSelectedClient(prev => ({ ...prev, notes: notesVal.trim() }));
+            setNotesVal(newNotes);
+            setAddingNote(false); setNewNoteText('');
+            setEditingStaffNote(false); setStaffNoteVal('');
+            showToast('✅', isEdit ? 'Note updated!' : 'Note added!');
+            setSelectedClient(prev => ({ ...prev, notes: newNotes }));
         } catch (err) {
             showToast('❌', 'Failed to save: ' + err.message);
         } finally {
@@ -197,10 +210,39 @@ export default function Clients() {
         }
     };
 
+    const [clientPage, setClientPage] = useState(1);
+    const CLIENTS_PER_PAGE = 10;
+    useEffect(() => setClientPage(1), [search]);
+
     const filtered = clients.filter(c => {
         const q = search.toLowerCase();
         return !q || c.name.toLowerCase().includes(q) || c.mobile.includes(q);
     });
+    const totalClientPages = Math.max(1, Math.ceil(filtered.length / CLIENTS_PER_PAGE));
+
+    // Clamp page when filtered list shrinks (e.g., delete, search)
+    useEffect(() => {
+        if (clientPage > totalClientPages) setClientPage(totalClientPages);
+    }, [totalClientPages, clientPage]);
+
+    const safePage = Math.min(clientPage, totalClientPages);
+    const startIdx = (safePage - 1) * CLIENTS_PER_PAGE;
+    const paginatedClients = filtered.slice(startIdx, startIdx + CLIENTS_PER_PAGE);
+
+    // Smart page list — first, last, current ± 2, with ellipsis
+    const buildPageList = () => {
+        const total = totalClientPages;
+        if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+        const pages = new Set([1, total, safePage - 1, safePage, safePage + 1]);
+        const sorted = [...pages].filter(p => p >= 1 && p <= total).sort((a, b) => a - b);
+        const out = [];
+        for (let i = 0; i < sorted.length; i++) {
+            if (i > 0 && sorted[i] - sorted[i - 1] > 1) out.push('…');
+            out.push(sorted[i]);
+        }
+        return out;
+    };
+    const pageList = buildPageList();
 
     const handleDeleteClient = async (clientId, e) => {
         e.stopPropagation();
@@ -264,11 +306,11 @@ export default function Clients() {
                                             No clients found.
                                         </td>
                                     </tr>
-                                ) : filtered.map((c, index) => (
+                                ) : paginatedClients.map((c, index) => (
                                     <tr key={c.id} onClick={() => handleSelectClient(c)} style={{ cursor: 'pointer' }}>
                                         <td>
                                             <span style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: 700 }}>
-                                                {c.clientCode || `C${String(index + 1).padStart(3, '0')}`}
+                                                {c.clientCode || `C${String(startIdx + index + 1).padStart(3, '0')}`}
                                             </span>
                                         </td>
                                         <td><strong style={{ color: '#e879f9' }}>{c.name}</strong></td>
@@ -318,6 +360,22 @@ export default function Clients() {
                                 ))}
                             </tbody>
                         </table>
+                        {totalClientPages > 1 && (
+                            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', padding: '20px 0 4px', flexWrap: 'wrap' }}>
+                                <button onClick={() => setClientPage(p => Math.max(1, p - 1))} disabled={safePage === 1} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: safePage === 1 ? 'var(--text-muted)' : 'var(--text-primary)', padding: '6px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: safePage === 1 ? 'not-allowed' : 'pointer', opacity: safePage === 1 ? 0.4 : 1 }}>← Prev</button>
+                                {pageList.map((p, i) => (
+                                    p === '…' ? (
+                                        <span key={`ellip-${i}`} style={{ color: 'var(--text-muted)', padding: '6px 4px', fontSize: '13px', userSelect: 'none' }}>…</span>
+                                    ) : (
+                                        <button key={p} onClick={() => setClientPage(p)} style={{ background: p === safePage ? 'var(--accent)' : 'rgba(255,255,255,0.05)', border: `1px solid ${p === safePage ? 'var(--accent)' : 'var(--border)'}`, color: p === safePage ? '#fff' : 'var(--text-secondary)', padding: '6px 12px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', minWidth: '36px' }}>{p}</button>
+                                    )
+                                ))}
+                                <button onClick={() => setClientPage(p => Math.min(totalClientPages, p + 1))} disabled={safePage === totalClientPages} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: safePage === totalClientPages ? 'var(--text-muted)' : 'var(--text-primary)', padding: '6px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: safePage === totalClientPages ? 'not-allowed' : 'pointer', opacity: safePage === totalClientPages ? 0.4 : 1 }}>Next →</button>
+                                <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                                    Page {safePage} / {totalClientPages} · {filtered.length} total
+                                </span>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -507,67 +565,65 @@ export default function Clients() {
                             <div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>Client Notes</span>
-                                    {!editingNotes && (
-                                        <button
-                                            onClick={() => setEditingNotes(true)}
-                                            style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '5px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                                        >
-                                            ✏️ {notesVal.trim() ? 'Edit' : 'Add Notes'}
+                                    {!addingNote && !editingStaffNote && (
+                                        <button onClick={() => setAddingNote(true)} style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '5px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            + Add Note
                                         </button>
                                     )}
                                 </div>
 
-                                {editingNotes ? (
-                                    <div>
-                                        <textarea
-                                            autoFocus
-                                            value={notesVal}
-                                            onChange={e => setNotesVal(e.target.value)}
-                                            placeholder="Add notes about this client — important details, reminders, special instructions..."
-                                            style={{
-                                                width: '100%', minHeight: '160px', background: 'rgba(255,255,255,0.04)',
-                                                border: '1px solid rgba(245,158,11,0.4)', borderRadius: '12px',
-                                                padding: '14px 16px', color: 'var(--text-primary)', fontSize: '14px',
-                                                fontFamily: 'Inter, sans-serif', resize: 'vertical', outline: 'none',
-                                                lineHeight: '1.6', boxSizing: 'border-box',
-                                            }}
-                                            onFocus={e => e.target.style.borderColor = 'rgba(245,158,11,0.7)'}
-                                            onBlur={e => e.target.style.borderColor = 'rgba(245,158,11,0.4)'}
-                                        />
-                                        <div style={{ display: 'flex', gap: '8px', marginTop: '10px', justifyContent: 'flex-end' }}>
-                                            <button
-                                                onClick={() => { setEditingNotes(false); }}
-                                                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '7px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-                                            >
-                                                Cancel
-                                            </button>
-                                            <button
-                                                onClick={handleSaveNotes}
-                                                disabled={savingNotes}
-                                                style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '7px 20px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: savingNotes ? 'not-allowed' : 'pointer', opacity: savingNotes ? 0.6 : 1 }}
-                                            >
-                                                {savingNotes ? '⏳ Saving...' : '✅ Save Notes'}
-                                            </button>
+                                {/* CRM Notes — locked */}
+                                {crmNotesVal.trim() && (
+                                    <div style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '12px', padding: '16px 18px', fontSize: '14px', color: 'var(--text-primary)', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: '10px', position: 'relative' }}>
+                                        <div style={{ position: 'absolute', top: '10px', right: '12px', fontSize: '11px', color: '#a5b4fc', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                            🔒 CRM
                                         </div>
+                                        <div style={{ paddingRight: '60px' }}>{crmNotesVal.trim()}</div>
                                     </div>
-                                ) : (
-                                    <div>
-                                        {notesVal.trim() ? (
-                                            <div style={{
-                                                background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)',
-                                                borderRadius: '12px', padding: '16px 18px',
-                                                fontSize: '14px', color: 'var(--text-primary)',
-                                                lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                                            }}>
-                                                {notesVal}
-                                            </div>
-                                        ) : (
+                                )}
+
+                                {/* Staff Notes — editable */}
+                                {!editingStaffNote && !addingNote && (
+                                    notesVal.trim() ? (
+                                        <div style={{ background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.15)', borderRadius: '12px', padding: '16px 18px', fontSize: '14px', color: 'var(--text-primary)', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word', position: 'relative' }}>
+                                            <div style={{ position: 'absolute', top: '10px', right: '12px', fontSize: '11px', color: '#fbbf24', fontWeight: 700 }}>✏️ Staff</div>
+                                            <div style={{ paddingRight: '60px', marginBottom: '10px' }}>{notesVal.trim()}</div>
+                                            <button onClick={() => { setStaffNoteVal(notesVal.trim()); setEditingStaffNote(true); }} style={{ fontSize: '12px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '4px 12px', borderRadius: '7px', fontWeight: 700, cursor: 'pointer' }}>✏️ Edit</button>
+                                        </div>
+                                    ) : (
+                                        !crmNotesVal.trim() && (
                                             <div style={{ textAlign: 'center', padding: '40px', color: '#64748b', border: '1px dashed rgba(245,158,11,0.25)', borderRadius: '14px' }}>
                                                 <div style={{ fontSize: '36px', marginBottom: '12px' }}>📝</div>
                                                 <div style={{ fontSize: '14px', fontWeight: 600 }}>No notes yet</div>
-                                                <div style={{ fontSize: '12px', marginTop: '6px', color: '#475569' }}>Click "Add Notes" to write something</div>
+                                                <div style={{ fontSize: '12px', marginTop: '6px', color: '#475569' }}>Click "+ Add Note" to write something</div>
                                             </div>
-                                        )}
+                                        )
+                                    )
+                                )}
+
+                                {/* Edit staff note */}
+                                {editingStaffNote && (
+                                    <div>
+                                        <textarea autoFocus value={staffNoteVal} onChange={e => setStaffNoteVal(e.target.value)} style={{ width: '100%', minHeight: '120px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '12px', padding: '14px 16px', color: 'var(--text-primary)', fontSize: '14px', fontFamily: 'Inter, sans-serif', resize: 'vertical', outline: 'none', lineHeight: '1.6', boxSizing: 'border-box' }} />
+                                        <div style={{ display: 'flex', gap: '8px', marginTop: '10px', justifyContent: 'flex-end' }}>
+                                            <button onClick={() => { setEditingStaffNote(false); setStaffNoteVal(''); }} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '7px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                                            <button onClick={() => handleSaveNotes(true)} disabled={savingNotes || !staffNoteVal.trim()} style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '7px 20px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: (savingNotes || !staffNoteVal.trim()) ? 'not-allowed' : 'pointer', opacity: (savingNotes || !staffNoteVal.trim()) ? 0.5 : 1 }}>
+                                                {savingNotes ? '⏳ Saving...' : '✅ Save'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Add new note */}
+                                {addingNote && (
+                                    <div>
+                                        <textarea autoFocus value={newNoteText} onChange={e => setNewNoteText(e.target.value)} placeholder="Type new note to append..." style={{ width: '100%', minHeight: '120px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '12px', padding: '14px 16px', color: 'var(--text-primary)', fontSize: '14px', fontFamily: 'Inter, sans-serif', resize: 'vertical', outline: 'none', lineHeight: '1.6', boxSizing: 'border-box' }} onFocus={e => e.target.style.borderColor = 'rgba(245,158,11,0.7)'} onBlur={e => e.target.style.borderColor = 'rgba(245,158,11,0.4)'} />
+                                        <div style={{ display: 'flex', gap: '8px', marginTop: '10px', justifyContent: 'flex-end' }}>
+                                            <button onClick={() => { setAddingNote(false); setNewNoteText(''); }} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '7px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                                            <button onClick={() => handleSaveNotes(false)} disabled={savingNotes || !newNoteText.trim()} style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '7px 20px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: (savingNotes || !newNoteText.trim()) ? 'not-allowed' : 'pointer', opacity: (savingNotes || !newNoteText.trim()) ? 0.5 : 1 }}>
+                                                {savingNotes ? '⏳ Saving...' : '✅ Save'}
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
                             </div>

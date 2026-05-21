@@ -22,12 +22,37 @@ const formatDate = (dateStr) => {
     return `${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y}`;
 };
 
-const calcWorkHours = (checkIn, checkOut) => {
+const fmtHours = (decimalHours) => {
+    const h = Math.floor(decimalHours);
+    const m = Math.round((decimalHours - h) * 60);
+    return m === 0 ? `${h}h` : `${h}h ${m}m`;
+};
+
+const calcWorkHours = (checkIn, checkOut, breaks) => {
     if (!checkIn || !checkOut) return '—';
-    const diff = (new Date(checkOut) - new Date(checkIn)) / 1000 / 60;
+    let diffMs = new Date(checkOut) - new Date(checkIn);
+    // Subtract break time
+    (breaks || []).forEach(b => {
+        if (b.start && b.end) diffMs -= (new Date(b.end) - new Date(b.start));
+    });
+    if (diffMs < 0) diffMs = 0;
+    const diff = diffMs / 1000 / 60;
     const h = Math.floor(diff / 60);
     const mn = Math.round(diff % 60);
     return `${h}h ${mn}m`;
+};
+
+const calcBreakTime = (breaks) => {
+    if (!breaks || breaks.length === 0) return null;
+    let totalMs = 0;
+    breaks.forEach(b => {
+        if (b.start && b.end) totalMs += new Date(b.end) - new Date(b.start);
+    });
+    if (totalMs === 0) return null;
+    const totalMin = Math.round(totalMs / 1000 / 60);
+    const h = Math.floor(totalMin / 60);
+    const mn = totalMin % 60;
+    return h > 0 ? `${h}h ${mn}m` : `${mn}m`;
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -88,8 +113,36 @@ function StaffAttendance({ showToast }) {
         }
     };
 
+    const handleBreakStart = async () => {
+        setActionLoading(true);
+        try {
+            await apiFetch('/attendance/break-start', { method: 'POST', body: JSON.stringify({}) });
+            showToast('☕', 'Break started! Take some rest.');
+            fetchData();
+        } catch (err) {
+            showToast('❌', err.message, true);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleBreakEnd = async () => {
+        setActionLoading(true);
+        try {
+            await apiFetch('/attendance/break-end', { method: 'POST', body: JSON.stringify({}) });
+            showToast('💪', 'Break ended! Welcome back.');
+            fetchData();
+        } catch (err) {
+            showToast('❌', err.message, true);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
     const checkedIn = today?.check_in;
     const checkedOut = today?.check_out;
+    const breaks = today?.breaks || [];
+    const onBreak = breaks.some(b => !b.end);
     const presentDays = history.filter(r => r.status === 'present' || r.status === 'completed').length;
 
     if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</div>;
@@ -111,11 +164,12 @@ function StaffAttendance({ showToast }) {
                                 Today • {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                             </div>
                             <h2 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '8px', color: '#fff' }}>
-                                {!checkedIn ? 'Ready for Work?' : checkedOut ? 'Shift Complete!' : 'On Duty ✅'}
+                                {!checkedIn ? 'Ready for Work?' : checkedOut ? 'Shift Complete!' : onBreak ? 'On Break ☕' : 'On Duty ✅'}
                             </h2>
                             <div style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
                                 {!checkedIn ? "Don't forget to mark your attendance."
-                                    : checkedOut ? `Worked ${calcWorkHours(today.check_in, today.check_out)} today.`
+                                    : checkedOut ? `Worked ${calcWorkHours(today.check_in, today.check_out, today.breaks)} today.`
+                                    : onBreak ? `Break started at ${formatTime(breaks[breaks.length - 1]?.start)}. Press "Break End" to resume.`
                                     : `Checked in at ${formatTime(today.check_in)}. Have a great day!`}
                             </div>
                         </div>
@@ -131,10 +185,23 @@ function StaffAttendance({ showToast }) {
                                         <div style={{ fontSize: '11px', color: '#34d399', fontWeight: 700 }}>CHECKED IN</div>
                                         <div style={{ fontSize: '20px', color: '#fff', fontWeight: 800 }}>{formatTime(today.check_in)}</div>
                                     </div>
-                                    <button onClick={handleCheckOut} disabled={actionLoading}
-                                        style={{ background: '#f59e0b', color: '#fff', border: 'none', padding: '14px 28px', borderRadius: '16px', fontSize: '15px', fontWeight: 700, cursor: 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
-                                        {actionLoading ? '...' : 'Shift Off 🚪'}
-                                    </button>
+                                    {onBreak ? (
+                                        <button onClick={handleBreakEnd} disabled={actionLoading}
+                                            style={{ background: '#10b981', color: '#fff', border: 'none', padding: '14px 28px', borderRadius: '16px', fontSize: '15px', fontWeight: 700, cursor: 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
+                                            {actionLoading ? '...' : '💪 Break End'}
+                                        </button>
+                                    ) : (
+                                        <div style={{ display: 'flex', gap: '10px' }}>
+                                            <button onClick={handleBreakStart} disabled={actionLoading}
+                                                style={{ background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.4)', padding: '14px 18px', borderRadius: '16px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
+                                                {actionLoading ? '...' : '☕ Break'}
+                                            </button>
+                                            <button onClick={handleCheckOut} disabled={actionLoading}
+                                                style={{ background: '#f59e0b', color: '#fff', border: 'none', padding: '14px 18px', borderRadius: '16px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
+                                                {actionLoading ? '...' : 'Shift Off 🚪'}
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             ) : (
                                 <div style={{ display: 'flex', gap: '12px' }}>
@@ -146,6 +213,12 @@ function StaffAttendance({ showToast }) {
                                         <div style={{ fontSize: '11px', color: '#fbbf24', fontWeight: 700 }}>OUT</div>
                                         <div style={{ fontSize: '18px', color: '#fff', fontWeight: 800 }}>{formatTime(today.check_out)}</div>
                                     </div>
+                                    {calcBreakTime(today.breaks) && (
+                                        <div style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)', padding: '16px 20px', borderRadius: '16px', textAlign: 'center' }}>
+                                            <div style={{ fontSize: '11px', color: '#a5b4fc', fontWeight: 700 }}>BREAK</div>
+                                            <div style={{ fontSize: '18px', color: '#fff', fontWeight: 800 }}>{calcBreakTime(today.breaks)}</div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -158,7 +231,7 @@ function StaffAttendance({ showToast }) {
                         <div style={{ background: 'rgba(245,158,11,0.1)', width: '52px', height: '52px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>⏱️</div>
                         <div>
                             <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Today's Work</div>
-                            <div style={{ fontSize: '17px', fontWeight: 700 }}>{checkedIn && checkedOut ? calcWorkHours(today.check_in, today.check_out) : checkedIn ? 'In Progress...' : 'Not Started'}</div>
+                            <div style={{ fontSize: '17px', fontWeight: 700 }}>{checkedIn && checkedOut ? calcWorkHours(today.check_in, today.check_out, today.breaks) : checkedIn ? 'In Progress...' : 'Not Started'}</div>
                         </div>
                     </div>
                     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '20px', padding: '24px', flex: 1, display: 'flex', alignItems: 'center', gap: '20px' }}>
@@ -200,22 +273,24 @@ function StaffAttendance({ showToast }) {
                 </div>
                 <table>
                     <thead>
-                        <tr><th>Date</th><th>Check In</th><th>Check Out</th><th>Status</th><th>Working Hours</th></tr>
+                        <tr><th>Date</th><th>Check In</th><th>Check Out</th><th>Break</th><th>Status</th><th>Working Hours</th></tr>
                     </thead>
                     <tbody>
                         {history.length === 0 ? (
-                            <tr><td colSpan="5" style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No attendance records yet. Check in to start tracking!</td></tr>
+                            <tr><td colSpan="6" style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No attendance records yet. Check in to start tracking!</td></tr>
                         ) : history.map(r => {
                             const stColor = r.status === 'present' || r.status === 'completed' ? '#34d399' : r.status === 'leave' ? '#fbbf24' : '#f87171';
                             const stBg    = r.status === 'present' || r.status === 'completed' ? 'rgba(16,185,129,0.15)' : r.status === 'leave' ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)';
                             const stBorder= r.status === 'present' || r.status === 'completed' ? 'rgba(16,185,129,0.3)'  : r.status === 'leave' ? 'rgba(245,158,11,0.3)'  : 'rgba(239,68,68,0.3)';
+                            const breakTime = calcBreakTime(r.breaks);
                             return (
                                 <tr key={r.id}>
                                     <td><strong>{formatDate(r.date)}</strong></td>
                                     <td style={{ color: r.check_in ? '#fff' : 'var(--text-muted)', fontWeight: r.check_in ? 600 : 400 }}>{formatTime(r.check_in)}</td>
                                     <td style={{ color: r.check_out ? '#fff' : 'var(--text-muted)', fontWeight: r.check_out ? 600 : 400 }}>{formatTime(r.check_out)}</td>
+                                    <td style={{ color: breakTime ? '#a5b4fc' : 'var(--text-muted)' }}>{breakTime || '—'}</td>
                                     <td><span style={{ background: stBg, color: stColor, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, border: `1px solid ${stBorder}` }}>{r.status}</span></td>
-                                    <td style={{ color: 'var(--text-secondary)' }}>{calcWorkHours(r.check_in, r.check_out)}</td>
+                                    <td style={{ color: 'var(--text-secondary)' }}>{calcWorkHours(r.check_in, r.check_out, r.breaks)}</td>
                                 </tr>
                             );
                         })}
@@ -237,6 +312,9 @@ function AdminAttendance({ showToast }) {
     const [loading, setLoading] = useState(true);
     const [filterMonth, setFilterMonth] = useState(() => String(new Date().getMonth() + 1));
     const [filterYear, setFilterYear]   = useState(() => String(new Date().getFullYear()));
+    const [editRecord, setEditRecord]   = useState(null);
+    const [editForm,   setEditForm]     = useState({});
+    const [saving,     setSaving]       = useState(false);
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -263,6 +341,72 @@ function AdminAttendance({ showToast }) {
             setStaffDetail(res.data);
         } catch (err) {
             showToast('❌', err.message, true);
+        }
+    };
+
+    const refreshDetail = async () => {
+        if (!selectedStaff) return;
+        try {
+            const res = await apiFetch(`/attendance/admin/staff/${selectedStaff}?limit=60&month=${filterMonth}&year=${filterYear}`);
+            setStaffDetail(res.data);
+        } catch { /* silent */ }
+    };
+
+    // Convert ISO timestamp → "HH:MM" local time
+    const toTime = (iso) => {
+        if (!iso) return '';
+        const d = new Date(iso);
+        return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    };
+
+    // Combine date (YYYY-MM-DD) + time (HH:MM) → ISO string
+    const toISO = (date, time) => {
+        if (!date || !time) return null;
+        return new Date(`${date}T${time}:00`).toISOString();
+    };
+
+    const openEdit = (r) => {
+        const totalBreakMs = (r.breaks || []).reduce((sum, b) => {
+            if (b.start && b.end) return sum + (new Date(b.end) - new Date(b.start));
+            return sum;
+        }, 0);
+        setEditRecord(r);
+        setEditForm({
+            check_in:      toTime(r.check_in),
+            check_out:     toTime(r.check_out),
+            break_minutes: totalBreakMs > 0 ? String(Math.round(totalBreakMs / 60000)) : '',
+        });
+    };
+
+    const handleEditSave = async () => {
+        setSaving(true);
+        try {
+            const { date } = editRecord;
+            const check_in  = toISO(date, editForm.check_in);
+            const check_out = toISO(date, editForm.check_out);
+
+            // Rebuild breaks from minutes
+            let breaks = [];
+            const mins = parseInt(editForm.break_minutes) || 0;
+            if (mins > 0) {
+                const existingStart = editRecord.breaks?.[0]?.start;
+                const bStart = existingStart || check_in;
+                const bEnd   = new Date(new Date(bStart).getTime() + mins * 60000).toISOString();
+                breaks = [{ start: bStart, end: bEnd }];
+            }
+
+            await apiFetch('/attendance/admin/update', {
+                method: 'POST',
+                body: JSON.stringify({ record_id: editRecord.id, check_in, check_out, breaks }),
+            });
+            showToast('✅', 'Attendance updated!');
+            setEditRecord(null);
+            await refreshDetail();
+            await fetchData();
+        } catch (err) {
+            showToast('❌', err.message, true);
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -293,7 +437,7 @@ function AdminAttendance({ showToast }) {
                     <div style={{ display: 'flex', gap: '24px' }}>
                         {[
                             { label: 'PRESENT', value: sum?.present_days || 0, color: '#34d399' },
-                            { label: 'HOURS',   value: sum?.total_hours ? Number(sum.total_hours).toFixed(1) : '0', color: '#60a5fa' },
+                            { label: 'HOURS',   value: sum?.total_hours ? fmtHours(Number(sum.total_hours)) : '0h', color: '#60a5fa' },
                         ].map((st, i) => (
                             <div key={i} style={{ textAlign: 'center' }}>
                                 <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>{st.label}</div>
@@ -305,20 +449,59 @@ function AdminAttendance({ showToast }) {
                 <div className="table-card">
                     <div className="table-header"><span style={{ fontWeight: 700 }}>📋 {s?.name}'s Records</span></div>
                     <table>
-                        <thead><tr><th>Date</th><th>Check In</th><th>Check Out</th><th>Status</th><th>Working Hours</th></tr></thead>
+                        <thead><tr><th>Date</th><th>Check In</th><th>Check Out</th><th>Break</th><th>Status</th><th>Actions</th></tr></thead>
                         <tbody>
                             {det.length === 0
-                                ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>No records</td></tr>
+                                ? <tr><td colSpan="6" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>No records</td></tr>
                                 : det.map(r => {
+                                    const isEditing = editRecord?.id === r.id;
                                     const c = r.status === 'present' || r.status === 'completed' ? '#34d399' : '#f87171';
                                     const b = r.status === 'present' || r.status === 'completed' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)';
+                                    const breakTime = calcBreakTime(r.breaks);
+                                    const timeInput = { background: 'var(--bg-secondary)', border: '1px solid var(--accent)', borderRadius: '8px', padding: '5px 8px', color: '#fff', fontSize: '12px', width: '100px', outline: 'none', colorScheme: 'dark' };
                                     return (
                                         <tr key={r.id}>
                                             <td style={{ fontWeight: 600 }}>{formatDate(r.date)}</td>
-                                            <td style={{ color: r.check_in ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_in)}</td>
-                                            <td style={{ color: r.check_out ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_out)}</td>
-                                            <td><span style={{ background: b, color: c, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700 }}>{r.status}</span></td>
-                                            <td style={{ color: 'var(--text-secondary)' }}>{calcWorkHours(r.check_in, r.check_out)}</td>
+                                            {isEditing ? (
+                                                <>
+                                                    <td><input type="time" value={editForm.check_in} onChange={e => setEditForm(f => ({ ...f, check_in: e.target.value }))} style={timeInput} /></td>
+                                                    <td><input type="time" value={editForm.check_out} onChange={e => setEditForm(f => ({ ...f, check_out: e.target.value }))} style={timeInput} /></td>
+                                                    <td>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            <input type="number" min="0" max="480" value={editForm.break_minutes}
+                                                                onChange={e => setEditForm(f => ({ ...f, break_minutes: e.target.value }))}
+                                                                style={{ ...timeInput, width: '60px', textAlign: 'center' }} placeholder="0" />
+                                                            <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>min</span>
+                                                        </div>
+                                                    </td>
+                                                    <td><span style={{ background: b, color: c, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700 }}>{r.status}</span></td>
+                                                    <td>
+                                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                                            <button onClick={handleEditSave} disabled={saving}
+                                                                style={{ background: 'rgba(16,185,129,0.2)', color: '#34d399', border: '1px solid rgba(16,185,129,0.4)', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                                                                {saving ? '⏳' : '✅ Save'}
+                                                            </button>
+                                                            <button onClick={() => setEditRecord(null)}
+                                                                style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                                                                ✕
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <td style={{ color: r.check_in ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_in)}</td>
+                                                    <td style={{ color: r.check_out ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_out)}</td>
+                                                    <td style={{ color: breakTime ? '#a5b4fc' : 'var(--text-muted)' }}>{breakTime || '—'}</td>
+                                                    <td><span style={{ background: b, color: c, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700 }}>{r.status}</span></td>
+                                                    <td>
+                                                        <button onClick={() => openEdit(r)}
+                                                            style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.3)', padding: '4px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                                                            ✏️ Edit
+                                                        </button>
+                                                    </td>
+                                                </>
+                                            )}
                                         </tr>
                                     );
                                 })}
@@ -352,7 +535,7 @@ function AdminAttendance({ showToast }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
                 {[
                     { label: 'Total Present', value: totalPresent, icon: '✅', color: '#34d399' },
-                    { label: 'Total Hours',   value: totalHours.toFixed(1) + 'h', icon: '⏱️', color: '#60a5fa' },
+                    { label: 'Total Hours',   value: fmtHours(totalHours), icon: '⏱️', color: '#60a5fa' },
                 ].map((c, i) => (
                     <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '16px', padding: '18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
                         <div style={{ fontSize: '22px' }}>{c.icon}</div>
@@ -391,7 +574,7 @@ function AdminAttendance({ showToast }) {
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                                 {[
                                     { label: 'Present', value: s.present_days || 0, color: '#34d399', bg: 'rgba(16,185,129,0.1)' },
-                                    { label: 'Hours',   value: s.total_hours || 0,   color: '#60a5fa', bg: 'rgba(96,165,250,0.1)' },
+                                    { label: 'Hours',   value: fmtHours(Number(s.total_hours) || 0), color: '#60a5fa', bg: 'rgba(96,165,250,0.1)' },
                                 ].map((stat, i) => (
                                     <div key={i} style={{ background: stat.bg, borderRadius: '12px', padding: '10px 8px', textAlign: 'center' }}>
                                         <div style={{ fontSize: '20px', fontWeight: 800, color: stat.color }}>{stat.value}</div>
@@ -412,13 +595,13 @@ function AdminAttendance({ showToast }) {
                 </div>
                 <table>
                     <thead>
-                        <tr><th>Staff</th><th>Date</th><th>Check In</th><th>Check Out</th><th>Hours</th><th>Status</th></tr>
+                        <tr><th>Staff</th><th>Date</th><th>Check In</th><th>Check Out</th><th>Break</th><th>Hours</th><th>Status</th></tr>
                     </thead>
                     <tbody>
                         {loading ? (
-                            <tr><td colSpan="6" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>Loading...</td></tr>
+                            <tr><td colSpan="7" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>Loading...</td></tr>
                         ) : records.length === 0 ? (
-                            <tr><td colSpan="6" style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
+                            <tr><td colSpan="7" style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
                                 No attendance records for this month.<br/>
                                 <span style={{ fontSize: '12px' }}>Staff needs to check-in from their dashboard.</span>
                             </td></tr>
@@ -427,6 +610,7 @@ function AdminAttendance({ showToast }) {
                             const c   = st === 'present' || st === 'completed' ? '#34d399' : '#f87171';
                             const bg  = st === 'present' || st === 'completed' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)';
                             const lbl = st === 'completed' ? 'Shift Done' : st === 'present' ? 'Present' : 'Absent';
+                            const breakTime = calcBreakTime(r.breaks);
                             return (
                                 <tr key={`${r.staff_id}-${r.date}-${idx}`} style={{ cursor: 'pointer' }} onClick={() => openStaffDetail(r.staff_id)}>
                                     <td>
@@ -443,7 +627,8 @@ function AdminAttendance({ showToast }) {
                                     <td style={{ fontWeight: 600 }}>{formatDate(r.date)}</td>
                                     <td style={{ color: r.check_in ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_in)}</td>
                                     <td style={{ color: r.check_out ? '#fff' : 'var(--text-muted)' }}>{formatTime(r.check_out)}</td>
-                                    <td style={{ color: 'var(--text-secondary)' }}>{calcWorkHours(r.check_in, r.check_out)}</td>
+                                    <td style={{ color: breakTime ? '#a5b4fc' : 'var(--text-muted)' }}>{breakTime || '—'}</td>
+                                    <td style={{ color: 'var(--text-secondary)' }}>{calcWorkHours(r.check_in, r.check_out, r.breaks)}</td>
                                     <td><span style={{ background: bg, color: c, padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700 }}>{lbl}</span></td>
                                 </tr>
                             );

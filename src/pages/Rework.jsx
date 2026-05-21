@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
 import Toast from '../components/Toast';
 import useToast from '../hooks/useToast';
@@ -14,11 +14,13 @@ export default function Rework() {
     const [loading, setLoading] = useState(false);
     const [apiError, setApiError] = useState(null);
     const [filterStatus, setFilterStatus] = useState('All');
+    const [search, setSearch] = useState('');
     const [showAssignModal, setShowAssignModal] = useState(false);
     const [backendStaff, setBackendStaff] = useState([]);
     const [newRework, setNewRework] = useState({ task: '', client: '', staffId: '', reason: '' });
     const [reassigning, setReassigning] = useState(null);
     const [statusChanging, setStatusChanging] = useState(null);
+    const channelRef = useRef(null);
 
     const fetchReworks = async () => {
         setLoading(true);
@@ -42,6 +44,48 @@ export default function Rework() {
 
     useEffect(() => {
         if (role) fetchReworks();
+    }, [role]);
+
+    // ── Supabase Realtime: live status sync for reworks ────────────────────
+    useEffect(() => {
+        if (!role) return;
+
+        if (channelRef.current) supabase.removeChannel(channelRef.current);
+
+        const formatStatus = (s) => {
+            if (!s) return 'Pending';
+            const l = s.toLowerCase();
+            if (l === 'completed') return 'Completed';
+            if (l === 'in_progress' || l === 'in-progress') return 'In-Progress';
+            return 'Pending';
+        };
+
+        const channel = supabase
+            .channel('reworks-realtime-' + role)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'reworks' }, (payload) => {
+                const updated = payload.new;
+                if (!updated?.id) return;
+                setReworks(prev => prev.map(r =>
+                    r.id !== updated.id ? r : {
+                        ...r,
+                        status: formatStatus(updated.status),
+                        openedAt: updated.started_at ? new Date(updated.started_at).toLocaleString() : '-',
+                        completedAt: updated.completed_at ? new Date(updated.completed_at).toLocaleString() : '-',
+                        raw: { ...r.raw, ...updated },
+                    }
+                ));
+            })
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reworks' }, () => {
+                fetchReworks();
+            })
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'reworks' }, (payload) => {
+                if (payload.old?.id) setReworks(prev => prev.filter(r => r.id !== payload.old.id));
+            })
+            .subscribe();
+
+        channelRef.current = channel;
+
+        return () => { if (channelRef.current) supabase.removeChannel(channelRef.current); };
     }, [role]);
 
     useEffect(() => {
@@ -134,7 +178,12 @@ export default function Rework() {
         }
     };
 
-    const filteredReworks = allReworks.filter(r => filterStatus === 'All' || r.status === filterStatus);
+    const filteredReworks = allReworks.filter(r => {
+        const statusMatch = filterStatus === 'All' || r.status === filterStatus;
+        const q = search.toLowerCase();
+        const searchMatch = !q || r.client?.toLowerCase().includes(q) || r.task?.toLowerCase().includes(q) || r.users?.toLowerCase().includes(q);
+        return statusMatch && searchMatch;
+    });
 
     const getDuration = (start, end) => {
         if (!start || start === '-' || !end || end === '-') return '—';
@@ -164,16 +213,19 @@ export default function Rework() {
                 <div className="topbar">
                     <h1 className="topbar-title">{role === 'admin' ? '🔄 Rework Center' : '🔄 My Reworks'}</h1>
                     <div className="topbar-actions">
-                        {role === 'admin' && (
-                            <button className="btn-primary" onClick={() => setShowAssignModal(true)}>+ New Rework</button>
-                        )}
-                        <button className="btn-sm" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }} onClick={handleRefresh} title="Refresh">🔄</button>
                         <select className="btn-sm" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
                             <option value="All">All Status</option>
                             <option>Pending</option>
                             <option>In-Progress</option>
                             <option>Completed</option>
                         </select>
+                        <input
+                            type="text"
+                            placeholder="🔍 Search client, task, staff..."
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: '#fff', padding: '7px 12px', borderRadius: '8px', fontSize: '13px', outline: 'none', width: '220px' }}
+                        />
                     </div>
                 </div>
 

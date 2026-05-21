@@ -36,6 +36,7 @@ export default function StaffManagement() {
         const { data, error } = await supabase
             .from('staff')
             .select('id, name, email, staff_code, category, status, password, created_at')
+            .order('status', { ascending: true })
             .order('created_at');
         if (!error) setStaffList(data || []);
         setLoading(false);

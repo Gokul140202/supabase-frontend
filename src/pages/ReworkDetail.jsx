@@ -26,6 +26,13 @@ export default function ReworkDetail() {
     const [editingFileId, setEditingFileId] = useState(null);
     const [fileNameVal, setFileNameVal] = useState('');
     const [savingFileId, setSavingFileId] = useState(null);
+    const [clientNotes, setClientNotes]           = useState('');
+    const [crmNotes, setCrmNotes]                 = useState('');
+    const [addingNote, setAddingNote]             = useState(false);
+    const [newNoteText, setNewNoteText]           = useState('');
+    const [editingStaffNote, setEditingStaffNote] = useState(false);
+    const [staffNoteVal, setStaffNoteVal]         = useState('');
+    const [savingNotes, setSavingNotes]           = useState(false);
 
     const handleSaveFileName = async (docId) => {
         if (!fileNameVal.trim() || savingFileId) return;
@@ -35,6 +42,34 @@ export default function ReworkDetail() {
             setEditingFileId(null); showToast('✅', 'File name updated!'); await fetchRework();
         } catch (err) { showToast('❌', 'Failed: ' + err.message); }
         finally { setSavingFileId(null); }
+    };
+
+    const fetchClientNotes = async (clientId) => {
+        if (!clientId) return;
+        try {
+            const { data } = await supabase.from('clients').select('notes, crm_notes').eq('id', clientId).maybeSingle();
+            setClientNotes(data?.notes || '');
+            setCrmNotes(data?.crm_notes || '');
+        } catch {}
+    };
+
+    const handleSaveNotes = async (isEdit = false) => {
+        if (savingNotes) return;
+        const value = isEdit ? staffNoteVal.trim() : newNoteText.trim();
+        if (!value) return;
+        setSavingNotes(true);
+        try {
+            const clientId = rework?.clients?.id || rework?.client_id_raw || rework?.client_id;
+            if (!clientId) throw new Error('Client ID not found');
+            const newNotes = isEdit ? value : (clientNotes.trim() ? clientNotes.trim() + '\n\n' + value : value);
+            const { error } = await supabase.from('clients').update({ notes: newNotes, updated_at: new Date().toISOString() }).eq('id', clientId);
+            if (error) throw new Error(error.message);
+            setClientNotes(newNotes);
+            setAddingNote(false); setNewNoteText('');
+            setEditingStaffNote(false); setStaffNoteVal('');
+            showToast('✅', isEdit ? 'Note updated!' : 'Note added!');
+        } catch (err) { showToast('❌', 'Failed: ' + err.message); }
+        finally { setSavingNotes(false); }
     };
 
     const fetchClientDocs = async (clientId) => {
@@ -55,13 +90,16 @@ export default function ReworkDetail() {
             if (data.success && data.data) {
                 setRework(data.data);
                 const clientId = data.data.clients?.id || data.data.client_id_raw || data.data.client_id;
-                if (clientId) fetchClientDocs(clientId);
+                if (clientId) { fetchClientDocs(clientId); fetchClientNotes(clientId); }
             }
         } catch (err) { showToast('❌', 'Failed to load rework details'); }
         finally { setLoading(false); }
     };
 
     useEffect(() => { fetchRework(); }, [id, role]);
+
+    // ── Reset in-progress lock when navigating to a different rework ─────────
+    useEffect(() => { inProgressDone.current = false; }, [id]);
 
     // ── STAFF: rework open → in_progress + webhook (DB flag use pannurom) ───
     useEffect(() => {
@@ -189,8 +227,32 @@ export default function ReworkDetail() {
             if (storageError) throw new Error('Storage upload failed: ' + storageError.message);
             const { data: { publicUrl } } = supabase.storage.from('rework-documents').getPublicUrl(storagePath);
             await supabase.from('rework_documents').insert({ rework_id: reworkUUID, file_url: publicUrl, file_name: file.name, file_type: file.type || ext, doc_type: 'result' });
+            await supabase.from('reworks').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', reworkUUID);
             showToast('✅', 'Result uploaded.'); await fetchRework();
-            try { await fetch('https://services.leadconnectorhq.com/hooks/GmLfYZp3rjJ0jWt1nZtb/webhook-trigger/c8acafca-2d52-4f75-a8b9-31b783957fdb', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'rework_result_uploaded', task_id: rework.rework_code || reworkUUID, client_id: rework.client_code || rework.client_id, task_type: rework.task_type || 'N/A', client_name: rework.client_name || 'N/A', mobile_number: rework.client_phone || 'N/A', rework_reason: rework.rework_reason || null, document: { file_name: file.name, file_size: `${(file.size/(1024*1024)).toFixed(2)} MB`, file_type: file.type || ext, doc_type: 'result', url: publicUrl }, uploaded_at: new Date().toISOString() }) }); } catch (wErr) { console.warn('⚠️ CRM webhook failed:', wErr.message); }
+            try {
+                const wRes = await fetch('https://services.leadconnectorhq.com/hooks/GmLfYZp3rjJ0jWt1nZtb/webhook-trigger/c8acafca-2d52-4f75-a8b9-31b783957fdb', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event: 'rework_result_uploaded',
+                        task_id: rework.rework_code || reworkUUID,
+                        client_id: rework.client_code || rework.client_id,
+                        task_type: rework.task_type || 'N/A',
+                        client_name: rework.client_name || 'N/A',
+                        mobile_number: rework.client_phone || 'N/A',
+                        rework_reason: rework.rework_reason || null,
+                        document: {
+                            file_name: file.name,
+                            file_size: `${(file.size/(1024*1024)).toFixed(2)} MB`,
+                            file_type: file.type || ext,
+                            doc_type: 'result',
+                            url: publicUrl
+                        },
+                        uploaded_at: new Date().toISOString()
+                    })
+                });
+                console.log('✅ rework result webhook fired, status:', wRes.status);
+            } catch (wErr) { console.warn('❌ rework result webhook failed:', wErr.message); }
         } catch (err) { showToast('❌', 'Failed: ' + err.message); }
         finally { setUploading(false); e.target.value = ''; }
     };
@@ -242,6 +304,53 @@ export default function ReworkDetail() {
                                     </div>
                                 ))}
                             </div>
+                        </div>
+
+                        {/* Notes */}
+                        <div className="form-card" style={{ background: 'var(--bg-secondary)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 600 }}>📝 Notes</span>
+                                {!addingNote && !editingStaffNote && (
+                                    <button onClick={() => setAddingNote(true)} style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '3px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>+ Add Note</button>
+                                )}
+                            </div>
+                            {crmNotes.trim() && (
+                                <div style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: 'var(--text-primary)', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: '8px', position: 'relative' }}>
+                                    <div style={{ position: 'absolute', top: '8px', right: '10px', fontSize: '10px', color: '#a5b4fc', display: 'flex', alignItems: 'center', gap: '3px', fontWeight: 700 }}>🔒 CRM</div>
+                                    <div style={{ paddingRight: '55px' }}>{crmNotes.trim()}</div>
+                                </div>
+                            )}
+                            {!editingStaffNote && !addingNote && (
+                                clientNotes.trim() ? (
+                                    <div style={{ background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.15)', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: 'var(--text-primary)', lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-word', position: 'relative' }}>
+                                        <div style={{ position: 'absolute', top: '8px', right: '10px', fontSize: '10px', color: '#fbbf24', fontWeight: 700 }}>✏️ Staff</div>
+                                        <div style={{ paddingRight: '55px', marginBottom: '8px' }}>{clientNotes.trim()}</div>
+                                        <button onClick={() => { setStaffNoteVal(clientNotes.trim()); setEditingStaffNote(true); }} style={{ fontSize: '11px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '3px 10px', borderRadius: '6px', fontWeight: 700, cursor: 'pointer' }}>✏️ Edit</button>
+                                    </div>
+                                ) : (
+                                    !crmNotes.trim() && (
+                                        <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No notes added yet</div>
+                                    )
+                                )
+                            )}
+                            {editingStaffNote && (
+                                <div>
+                                    <textarea autoFocus value={staffNoteVal} onChange={e => setStaffNoteVal(e.target.value)} style={{ width: '100%', minHeight: '80px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '10px', padding: '10px 14px', color: 'var(--text-primary)', fontSize: '13px', fontFamily: 'Inter, sans-serif', resize: 'vertical', outline: 'none', lineHeight: '1.6', boxSizing: 'border-box' }} />
+                                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'flex-end' }}>
+                                        <button onClick={() => { setEditingStaffNote(false); setStaffNoteVal(''); }} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '5px 12px', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                                        <button onClick={() => handleSaveNotes(true)} disabled={savingNotes || !staffNoteVal.trim()} style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '5px 14px', borderRadius: '7px', fontSize: '12px', fontWeight: 700, cursor: (savingNotes || !staffNoteVal.trim()) ? 'not-allowed' : 'pointer', opacity: (savingNotes || !staffNoteVal.trim()) ? 0.5 : 1 }}>{savingNotes ? '⏳...' : '✅ Save'}</button>
+                                    </div>
+                                </div>
+                            )}
+                            {addingNote && (
+                                <div>
+                                    <textarea autoFocus value={newNoteText} onChange={e => setNewNoteText(e.target.value)} placeholder="Type your note here..." style={{ width: '100%', minHeight: '80px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '10px', padding: '10px 14px', color: 'var(--text-primary)', fontSize: '13px', fontFamily: 'Inter, sans-serif', resize: 'vertical', outline: 'none', lineHeight: '1.6', boxSizing: 'border-box' }} />
+                                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'flex-end' }}>
+                                        <button onClick={() => { setAddingNote(false); setNewNoteText(''); }} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#94a3b8', padding: '5px 12px', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                                        <button onClick={() => handleSaveNotes(false)} disabled={savingNotes || !newNoteText.trim()} style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24', padding: '5px 14px', borderRadius: '7px', fontSize: '12px', fontWeight: 700, cursor: (savingNotes || !newNoteText.trim()) ? 'not-allowed' : 'pointer', opacity: (savingNotes || !newNoteText.trim()) ? 0.5 : 1 }}>{savingNotes ? '⏳...' : '✅ Save'}</button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* ══════ ATTACHED DOCUMENTS — single merged section ══════ */}

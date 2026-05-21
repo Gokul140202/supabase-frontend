@@ -14,9 +14,57 @@ export default function Tasks() {
     const [loading, setLoading] = useState(false);
     const [apiError, setApiError] = useState(null);
     const [filterStatus, setFilterStatus] = useState('All');
+    const [search, setSearch] = useState('');
     const [showAssignModal, setShowAssignModal] = useState(false);
     const [backendStaff, setBackendStaff] = useState([]);
-    const [newTask, setNewTask] = useState({ task: '', client: '', staffId: '' });
+    const [newTask, setNewTask] = useState({ task: '', client: '', mobile: '', staffId: '' });
+
+    // Task type → specific staff IDs (UUID, constant)
+    const TASK_TYPES = [
+        { label: 'GST Filling',                            value: 'GST_FILLING' },
+        { label: 'GST Registration',                       value: 'GST_REGISTRATION' },
+        { label: 'Salary Income',                          value: 'SALARY_INCOME' },
+        { label: 'Salary & Trading Income',                value: 'SALARY_TRADING' },
+        { label: 'Salary, Trading & RSU',                  value: 'SALARY_TRADING_RSU' },
+        { label: 'Salary & Business Income',               value: 'SALARY_BUSINESS_INCOME' },
+        { label: 'Salary + Trading + Business Income',     value: 'SALARY_TRADING_BUSINESS_INCOME' },
+        { label: 'Business Income',                        value: 'BUSINESS_INCOME' },
+        { label: 'Business Income + P&L + BS',             value: 'BUSINESS_INCOME_PL_BS' },
+        { label: 'Business Income + P&L + BS + Audit Sign', value: 'BUSINESS_INCOME_PL_BS_AUDIT' },
+        { label: 'Income Tax',                             value: 'INCOME_TAX' },
+        { label: 'Other Income',                           value: 'OTHER_INCOME' },
+        { label: 'Private Ltd Registration',               value: 'PRIVATE_LTD_REGISTRATION' },
+    ];
+    const LAKSHMIPRIYA_ID = '29b24107-b76c-4529-8140-e90f2035c448'; // STF-001
+    const TASK_STAFF_MAP = {
+        'SALARY_TRADING_BUSINESS_INCOME': [LAKSHMIPRIYA_ID],                                                    // STF-001 only
+        'SALARY_TRADING':                 ['adf414d3-9c7d-4190-bdb0-748ec330dcf6', 'f581c3eb-4b64-4280-99bb-7227f622e184'], // STF-003, STF-004
+        'SALARY_TRADING_RSU':             ['58706a6b-a72d-4da8-979b-9fb7c7b26c1b'],                             // STF-005
+    };
+    // Round robin task types — auto-assign to next active staff in rotation
+    const ROUND_ROBIN_TYPES = new Set(['BUSINESS_INCOME', 'BUSINESS_INCOME_PL_BS', 'BUSINESS_INCOME_PL_BS_AUDIT']);
+    const KARTHIKEYAN_ID = '58706a6b-a72d-4da8-979b-9fb7c7b26c1b'; // STF-005
+
+    const getRoundRobinStaff = () => {
+        const active = backendStaff.filter(s => s.status === 'active');
+        if (active.length === 0) return null;
+        const idx = parseInt(localStorage.getItem('rr_task_idx') || '0', 10);
+        return active[idx % active.length];
+    };
+    const advanceRoundRobin = () => {
+        const active = backendStaff.filter(s => s.status === 'active');
+        if (active.length === 0) return;
+        const idx = parseInt(localStorage.getItem('rr_task_idx') || '0', 10);
+        localStorage.setItem('rr_task_idx', String((idx + 1) % active.length));
+    };
+
+    const getEligibleStaff = (taskType) => {
+        const active = backendStaff.filter(s => s.status === 'active');
+        if (!taskType) return active;
+        const ids = TASK_STAFF_MAP[taskType];
+        if (ids) return active.filter(s => ids.includes(s.id));
+        return active.filter(s => s.id !== KARTHIKEYAN_ID);
+    };
     const [reassigning, setReassigning] = useState(null);
     const [statusChanging, setStatusChanging] = useState(null);
     const [liveIndicator, setLiveIndicator] = useState(false); // realtime pulse
@@ -143,13 +191,14 @@ export default function Tasks() {
         try {
             const data = await apiFetch('/admin/create-task', {
                 method: 'POST',
-                body: JSON.stringify({ clientName: newTask.client, taskType: newTask.task, staffId: newTask.staffId })
+                body: JSON.stringify({ clientName: newTask.client, taskType: newTask.task, staffId: newTask.staffId, mobile: newTask.mobile || null })
             });
             if (data.success) {
+                if (ROUND_ROBIN_TYPES.has(newTask.task)) advanceRoundRobin();
                 showToast('🚀', 'Task assigned successfully!');
                 fetchTasks();
                 setShowAssignModal(false);
-                setNewTask({ task: '', client: '', staffId: '' });
+                setNewTask({ task: '', client: '', mobile: '', staffId: '' });
             }
         } catch (err) {
             showToast('❌', 'Failed: ' + err.message);
@@ -216,7 +265,12 @@ export default function Tasks() {
         }
     };
 
-    const filteredTasks = allTasks.filter(t => filterStatus === 'All' || t.status === filterStatus);
+    const filteredTasks = allTasks.filter(t => {
+        const statusMatch = filterStatus === 'All' || t.status === filterStatus;
+        const q = search.toLowerCase();
+        const searchMatch = !q || t.client?.toLowerCase().includes(q) || t.task?.toLowerCase().includes(q) || t.users?.toLowerCase().includes(q);
+        return statusMatch && searchMatch;
+    });
 
     const getDuration = (start, end) => {
         if (!start || start === '-' || !end || end === '-') return '—';
@@ -271,6 +325,13 @@ export default function Tasks() {
                             <option>In-Progress</option>
                             <option>Completed</option>
                         </select>
+                        <input
+                            type="text"
+                            placeholder="🔍 Search client, task, staff..."
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: '#fff', padding: '7px 12px', borderRadius: '8px', fontSize: '13px', outline: 'none', width: '220px' }}
+                        />
                     </div>
                 </div>
 
@@ -401,19 +462,48 @@ export default function Tasks() {
                     <div className="form-card" style={{ width: '400px', background: 'var(--bg-secondary)', border: '1px solid var(--border-active)' }}>
                         <h2 style={{ fontSize: '18px', marginBottom: '20px' }}>Assign New Task</h2>
                         <div className="form-group">
-                            <label className="form-label">Task Name</label>
-                            <input className="form-input" placeholder="e.g. GST Filing" value={newTask.task} onChange={e => setNewTask({ ...newTask, task: e.target.value })} />
+                            <label className="form-label">Task Type</label>
+                            <select className="form-input" value={newTask.task} onChange={e => {
+                                const taskType = e.target.value;
+                                let staffId = '';
+                                if (taskType === 'SALARY_TRADING_BUSINESS_INCOME') {
+                                    staffId = LAKSHMIPRIYA_ID;
+                                } else if (ROUND_ROBIN_TYPES.has(taskType)) {
+                                    staffId = getRoundRobinStaff()?.id || '';
+                                }
+                                setNewTask({ ...newTask, task: taskType, staffId });
+                            }}>
+                                <option value="">-- Select Task Type --</option>
+                                {TASK_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                            </select>
                         </div>
                         <div className="form-group">
                             <label className="form-label">Client Name</label>
                             <input className="form-input" placeholder="Customer Name" value={newTask.client} onChange={e => setNewTask({ ...newTask, client: e.target.value })} />
                         </div>
                         <div className="form-group">
-                            <label className="form-label">Assign To Staff</label>
-                            <select className="form-input" value={newTask.staffId} onChange={e => setNewTask({ ...newTask, staffId: e.target.value })}>
+                            <label className="form-label">Mobile Number</label>
+                            <input className="form-input" placeholder="10-digit mobile number" value={newTask.mobile} onChange={e => setNewTask({ ...newTask, mobile: e.target.value })} maxLength={10} />
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">
+                                Assign To Staff
+                                {ROUND_ROBIN_TYPES.has(newTask.task) && (
+                                    <span style={{ marginLeft: '8px', fontSize: '11px', color: 'var(--accent)', fontWeight: 500 }}>(Auto Round Robin)</span>
+                                )}
+                                {newTask.task === 'SALARY_TRADING_BUSINESS_INCOME' && (
+                                    <span style={{ marginLeft: '8px', fontSize: '11px', color: '#f59e0b', fontWeight: 500 }}>(Lakshmipriya Only)</span>
+                                )}
+                            </label>
+                            <select
+                                className="form-input"
+                                value={newTask.staffId}
+                                onChange={e => setNewTask({ ...newTask, staffId: e.target.value })}
+                                disabled={newTask.task === 'SALARY_TRADING_BUSINESS_INCOME'}
+                            >
                                 <option value="">-- Select Staff --</option>
-                                {backendStaff.map(s => (
-                                    <option key={s.id} value={s.id}>[{s.staff_code || 'S???'}] {s.name} ({s.category})</option>
+                                {getEligibleStaff(newTask.task).map(s => (
+                                    <option key={s.id} value={s.id}>[{s.staff_code || 'S???'}] {s.name}</option>
                                 ))}
                             </select>
                         </div>

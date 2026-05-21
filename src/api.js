@@ -438,7 +438,7 @@ export const apiFetch = async (endpoint, options = {}) => {
             const updates = { status };
             if (status === 'in_progress') updates.started_at = new Date().toISOString();
             if (status === 'completed')   updates.completed_at = new Date().toISOString();
-            if (status === 'assigned')    { updates.started_at = null; updates.completed_at = null; }
+            if (status === 'assigned')    { updates.started_at = null; updates.completed_at = null; updates.inprogress_webhook_sent = false; }
             const { error } = await supabase.from('reworks').update(updates).eq('id', reworkId);
             if (error) throw error;
             return { success: true };
@@ -484,9 +484,61 @@ export const apiFetch = async (endpoint, options = {}) => {
             const staffId = getCurrentStaffId();
             if (!staffId) throw new Error('Not authenticated as staff');
             const today = new Date().toISOString().split('T')[0];
+            // Auto-close any active break before checking out
+            const { data: rec } = await supabase.from('attendance').select('id, breaks').eq('staff_id', staffId).eq('date', today).maybeSingle();
+            if (rec) {
+                const breaks = rec.breaks || [];
+                const activeIdx = breaks.findIndex(b => !b.end);
+                if (activeIdx !== -1) {
+                    breaks[activeIdx].end = new Date().toISOString();
+                    await supabase.from('attendance').update({ breaks }).eq('id', rec.id);
+                }
+            }
             const { error } = await supabase.from('attendance')
                 .update({ check_out: new Date().toISOString(), status: 'completed' })
                 .eq('staff_id', staffId).eq('date', today);
+            if (error) throw error;
+            return { success: true };
+        }
+
+        if (path === '/attendance/break-start' && method === 'POST') {
+            const staffId = getCurrentStaffId();
+            if (!staffId) throw new Error('Not authenticated as staff');
+            const today = new Date().toISOString().split('T')[0];
+            const { data: record } = await supabase.from('attendance').select('id, breaks, check_in, check_out').eq('staff_id', staffId).eq('date', today).maybeSingle();
+            if (!record || !record.check_in) throw new Error('Not checked in today');
+            if (record.check_out) throw new Error('Shift already completed');
+            const breaks = record.breaks || [];
+            if (breaks.some(b => !b.end)) throw new Error('Already on break');
+            breaks.push({ start: new Date().toISOString(), end: null });
+            const { error } = await supabase.from('attendance').update({ breaks }).eq('id', record.id);
+            if (error) throw error;
+            return { success: true };
+        }
+
+        if (path === '/attendance/break-end' && method === 'POST') {
+            const staffId = getCurrentStaffId();
+            if (!staffId) throw new Error('Not authenticated as staff');
+            const today = new Date().toISOString().split('T')[0];
+            const { data: record } = await supabase.from('attendance').select('id, breaks').eq('staff_id', staffId).eq('date', today).maybeSingle();
+            if (!record) throw new Error('No attendance record for today');
+            const breaks = record.breaks || [];
+            const activeIdx = breaks.findIndex(b => !b.end);
+            if (activeIdx === -1) throw new Error('No active break');
+            breaks[activeIdx].end = new Date().toISOString();
+            const { error } = await supabase.from('attendance').update({ breaks }).eq('id', record.id);
+            if (error) throw error;
+            return { success: true };
+        }
+
+        if (path === '/attendance/admin/update' && method === 'POST') {
+            const { record_id, check_in, check_out, breaks } = body;
+            if (!record_id) throw new Error('record_id required');
+            const updates = { updated_at: new Date().toISOString() };
+            if (check_in  !== undefined) updates.check_in  = check_in  || null;
+            if (check_out !== undefined) updates.check_out = check_out || null;
+            if (breaks    !== undefined) updates.breaks    = breaks;
+            const { error } = await supabase.from('attendance').update(updates).eq('id', record_id);
             if (error) throw error;
             return { success: true };
         }
@@ -499,16 +551,20 @@ export const apiFetch = async (endpoint, options = {}) => {
             const start = `${y}-${mStr}-01`, end = `${y}-${mStr}-${lastDay}`;
             const [{ data: staffList }, { data: records }] = await Promise.all([
                 supabase.from('staff').select('id, name, email, staff_code').eq('status', 'active'),
-                supabase.from('attendance').select('staff_id, status, check_in, check_out').gte('date', start).lte('date', end),
+                supabase.from('attendance').select('staff_id, status, check_in, check_out, breaks').gte('date', start).lte('date', end),
             ]);
             const summary = (staffList || []).map(s => {
                 const sr = (records || []).filter(r => r.staff_id === s.id);
                 const presentDays = sr.filter(r => r.status === 'present' || r.status === 'completed').length;
                 const totalHours = sr.reduce((sum, r) => {
-                    if (r.check_in && r.check_out) return sum + (new Date(r.check_out) - new Date(r.check_in)) / 3600000;
+                    if (r.check_in && r.check_out) {
+                        let ms = new Date(r.check_out) - new Date(r.check_in);
+                        (r.breaks || []).forEach(b => { if (b.start && b.end) ms -= (new Date(b.end) - new Date(b.start)); });
+                        return sum + Math.max(0, ms) / 3600000;
+                    }
                     return sum;
                 }, 0);
-                return { staff_id: s.id, staff_name: s.name, staff_email: s.email, staff_code: s.staff_code, present_days: presentDays, absent_days: 0, total_hours: totalHours.toFixed(1) };
+                return { staff_id: s.id, staff_name: s.name, staff_email: s.email, staff_code: s.staff_code, present_days: presentDays, absent_days: 0, total_hours: totalHours };
             });
             return { success: true, data: summary };
         }
@@ -541,14 +597,18 @@ export const apiFetch = async (endpoint, options = {}) => {
             const { data: records } = await q;
             const presentDays = (records || []).filter(r => r.status === 'present' || r.status === 'completed').length;
             const totalHours = (records || []).reduce((sum, r) => {
-                if (r.check_in && r.check_out) return sum + (new Date(r.check_out) - new Date(r.check_in)) / 3600000;
+                if (r.check_in && r.check_out) {
+                    let ms = new Date(r.check_out) - new Date(r.check_in);
+                    (r.breaks || []).forEach(b => { if (b.start && b.end) ms -= (new Date(b.end) - new Date(b.start)); });
+                    return sum + Math.max(0, ms) / 3600000;
+                }
                 return sum;
             }, 0);
             return {
                 success: true,
                 data: {
                     staff: staffData,
-                    summary: { present_days: presentDays, absent_days: 0, total_hours: totalHours.toFixed(1) },
+                    summary: { present_days: presentDays, absent_days: 0, total_hours: totalHours },
                     records: { data: records || [] },
                 },
             };
