@@ -411,13 +411,41 @@ function AdminAttendance({ showToast }) {
     };
 
     const totalPresent = staffSummary.reduce((s, x) => s + Number(x.present_days || 0), 0);
-    const totalHours   = staffSummary.reduce((s, x) => s + Number(x.total_hours  || 0), 0);
+
+    // Live "on break" status — today's records with an active (un-ended) break
+    const todayStr = new Date().toISOString().split('T')[0];
+    const onBreakStaff = records
+        .filter(r => r.date === todayStr)
+        .map(r => {
+            const active = (r.breaks || []).find(b => b.start && !b.end);
+            if (!active) return null;
+            const mins = Math.max(0, Math.floor((Date.now() - new Date(active.start).getTime()) / 60000));
+            const h = Math.floor(mins / 60);
+            const mn = mins % 60;
+            return { name: r.staff_name, duration: h > 0 ? `${h}h ${mn}m` : `${mn}m` };
+        })
+        .filter(Boolean);
 
     // Staff drill-down
     if (selectedStaff && staffDetail) {
         const s   = staffDetail.staff;
         const sum = staffDetail.summary;
         const det = staffDetail.records?.data || [];
+
+        // Today's login hours only (not cumulative)
+        const todayRec = det.find(r => r.date === todayStr);
+        let todayHours = '0h';
+        if (todayRec && todayRec.check_in) {
+            const endTime = todayRec.check_out ? new Date(todayRec.check_out) : new Date();
+            let ms = endTime - new Date(todayRec.check_in);
+            (todayRec.breaks || []).forEach(b => {
+                if (b.start && b.end)      ms -= (new Date(b.end) - new Date(b.start));
+                else if (b.start)          ms -= (Date.now() - new Date(b.start).getTime());
+            });
+            if (ms < 0) ms = 0;
+            todayHours = fmtHours(ms / 3600000);
+        }
+
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 <button onClick={() => { setSelectedStaff(null); setStaffDetail(null); }}
@@ -437,7 +465,7 @@ function AdminAttendance({ showToast }) {
                     <div style={{ display: 'flex', gap: '24px' }}>
                         {[
                             { label: 'PRESENT', value: sum?.present_days || 0, color: '#34d399' },
-                            { label: 'HOURS',   value: sum?.total_hours ? fmtHours(Number(sum.total_hours)) : '0h', color: '#60a5fa' },
+                            { label: 'HOURS',   value: todayHours, color: '#60a5fa' },
                         ].map((st, i) => (
                             <div key={i} style={{ textAlign: 'center' }}>
                                 <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>{st.label}</div>
@@ -533,18 +561,30 @@ function AdminAttendance({ showToast }) {
 
             {/* Summary Cards */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
-                {[
-                    { label: 'Total Present', value: totalPresent, icon: '✅', color: '#34d399' },
-                    { label: 'Total Hours',   value: fmtHours(totalHours), icon: '⏱️', color: '#60a5fa' },
-                ].map((c, i) => (
-                    <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '16px', padding: '18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
-                        <div style={{ fontSize: '22px' }}>{c.icon}</div>
-                        <div>
-                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>{c.label}</div>
-                            <div style={{ fontSize: '22px', fontWeight: 800, color: c.color }}>{c.value}</div>
-                        </div>
+                <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '16px', padding: '18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <div style={{ fontSize: '22px' }}>✅</div>
+                    <div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Total Present</div>
+                        <div style={{ fontSize: '22px', fontWeight: 800, color: '#34d399' }}>{totalPresent}</div>
                     </div>
-                ))}
+                </div>
+                <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '16px', padding: '18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <div style={{ fontSize: '22px' }}>☕</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>On Break</div>
+                        {onBreakStaff.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                {onBreakStaff.map((s, idx) => (
+                                    <div key={idx} style={{ fontSize: '14px', fontWeight: 700, color: '#a5b4fc' }}>
+                                        {s.name} — <span style={{ color: '#fbbf24' }}>{s.duration}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div style={{ fontSize: '18px', fontWeight: 700, color: '#a5b4fc' }}>No staff on break</div>
+                        )}
+                    </div>
+                </div>
             </div>
 
             {/* Staff Cards */}
@@ -574,7 +614,7 @@ function AdminAttendance({ showToast }) {
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                                 {[
                                     { label: 'Present', value: s.present_days || 0, color: '#34d399', bg: 'rgba(16,185,129,0.1)' },
-                                    { label: 'Hours',   value: fmtHours(Number(s.total_hours) || 0), color: '#60a5fa', bg: 'rgba(96,165,250,0.1)' },
+                                    { label: 'Absent',  value: s.absent_days  || 0, color: '#f87171', bg: 'rgba(239,68,68,0.1)' },
                                 ].map((stat, i) => (
                                     <div key={i} style={{ background: stat.bg, borderRadius: '12px', padding: '10px 8px', textAlign: 'center' }}>
                                         <div style={{ fontSize: '20px', fontWeight: 800, color: stat.color }}>{stat.value}</div>

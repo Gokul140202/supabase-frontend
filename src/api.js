@@ -556,6 +556,8 @@ export const apiFetch = async (endpoint, options = {}) => {
             const summary = (staffList || []).map(s => {
                 const sr = (records || []).filter(r => r.staff_id === s.id);
                 const presentDays = sr.filter(r => r.status === 'present' || r.status === 'completed').length;
+                // Absent = records where staff didn't check-in
+                const absentDays = sr.filter(r => !r.check_in).length;
                 const totalHours = sr.reduce((sum, r) => {
                     if (r.check_in && r.check_out) {
                         let ms = new Date(r.check_out) - new Date(r.check_in);
@@ -564,7 +566,7 @@ export const apiFetch = async (endpoint, options = {}) => {
                     }
                     return sum;
                 }, 0);
-                return { staff_id: s.id, staff_name: s.name, staff_email: s.email, staff_code: s.staff_code, present_days: presentDays, absent_days: 0, total_hours: totalHours };
+                return { staff_id: s.id, staff_name: s.name, staff_email: s.email, staff_code: s.staff_code, present_days: presentDays, absent_days: absentDays, total_hours: totalHours };
             });
             return { success: true, data: summary };
         }
